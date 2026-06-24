@@ -16,7 +16,6 @@ import time
 REQUIRED_PACKAGES = {
     "torch": "torch>=2.0.0",
     "tiktoken": "tiktoken>=0.5.0",
-    "transformers": "transformers>=4.30.0",
 }
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -59,8 +58,6 @@ def check_and_install_packages():
 
     # Verify imports work
     import torch
-    import tiktoken
-    import transformers
     print(f"\n  PyTorch version: {torch.__version__}")
     print(f"  Device: {'CUDA' if torch.cuda.is_available() else 'CPU'}")
 
@@ -101,16 +98,20 @@ What the model learns:
     import torch
     from model import create_model
     from tokenizer import CharTokenizer
-    from config import SMALL_CONFIG
+    from config import auto_config, auto_train_config
+    from system import print_system_info
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model_config = SMALL_CONFIG
+    info = print_system_info()
+    torch.set_num_threads(info["threads"])
+
+    model_config = auto_config()
+    train_config = auto_train_config(TRAIN_DATA_FILE, CHECKPOINT_DIR)
     tokenizer = CharTokenizer()
-    model = create_model(model_config).to(device)
+    model = create_model(model_config).to(info["device"])
 
     print(f"\n  Model parameters: {model.count_params():,}")
     print(f"  Architecture: {model_config.num_layers} layers, {model_config.hidden_size} hidden")
-    print(f"  Training on: {device.upper()}")
+    print(f"  Training on: {info['device'].upper()}")
 
     # Prepare training data if not exists
     if not os.path.exists(TRAIN_DATA_FILE):
@@ -152,14 +153,14 @@ From that day on Lily visited the forest every weekend. She made many animal fri
             return x, y
 
     dataset = TextDataset(TRAIN_DATA_FILE, tokenizer, model_config.max_seq_len)
-    loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
+    loader = DataLoader(dataset, batch_size=train_config.batch_size, shuffle=True, num_workers=0)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
     model.train()
     total_steps = 0
-    max_steps = 500
+    max_steps = train_config.max_steps
     start_time = time.time()
 
     print(f"\n  Training for {max_steps} steps...")
@@ -210,9 +211,11 @@ def load_model():
     import torch
     from model import create_model
     from tokenizer import CharTokenizer
-    from config import ModelConfig
+    from config import ModelConfig, auto_config
+    from system import print_system_info
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    info = print_system_info()
+    torch.set_num_threads(info["threads"])
 
     # Find model file
     model_path = BEST_MODEL_PATH if os.path.exists(BEST_MODEL_PATH) else FINAL_MODEL_PATH
@@ -237,16 +240,16 @@ def load_model():
 
     model = create_model(config)
     model.load_state_dict(checkpoint["model"])
-    model.to(device)
+    model.to(info["device"])
     model.eval()
 
     tokenizer = CharTokenizer()
 
     params = model.count_params()
     print(f"  Model loaded! {params:,} parameters ({params/1e6:.1f}M)")
-    print(f"  Device: {device.upper()}")
+    print(f"  Device: {info['device'].upper()}")
 
-    return model, tokenizer, device
+    return model, tokenizer, info["device"]
 
 # ============================================================
 # STEP 5: INTERACTIVE CHAT

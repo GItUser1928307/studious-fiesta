@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the model on the conversational dataset."""
+"""Train the model - auto-detects hardware."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -8,21 +8,14 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from model import create_model
 from tokenizer import CharTokenizer
-from config import ModelConfig
+from config import auto_config, auto_train_config
+from system import print_system_info, get_cpu_threads
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PARENT_DIR = os.path.dirname(SCRIPT_DIR)
 DATA_FILE = os.path.join(PARENT_DIR, "quick_train_data.txt")
 CKPT_DIR = os.path.join(PARENT_DIR, "quick_ckpt")
 
-FAST_CONFIG = ModelConfig(
-    vocab_size=128,
-    hidden_size=128,
-    num_layers=4,
-    num_heads=4,
-    intermediate_size=256,
-    max_seq_len=64,
-)
 
 class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer, seq_len):
@@ -36,38 +29,43 @@ class TextDataset(Dataset):
         chunk = self.tokens[idx : idx + self.seq_len + 1]
         return torch.tensor(chunk[:-1], dtype=torch.long), torch.tensor(chunk[1:], dtype=torch.long)
 
+
 def main():
-    device = "cpu"
-    model_config = FAST_CONFIG
+    info = print_system_info()
+    torch.set_num_threads(info["threads"])
+
+    model_config = auto_config()
+    train_config = auto_train_config(DATA_FILE, CKPT_DIR)
     tokenizer = CharTokenizer()
-    model = create_model(model_config).to(device)
+    model = create_model(model_config)
     print(f"Params: {model.count_params():,}", flush=True)
+    print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
-    loader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=0)
+    loader = DataLoader(dataset, batch_size=train_config.batch_size, shuffle=True, num_workers=0)
     print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-4, weight_decay=0.1)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
     os.makedirs(CKPT_DIR, exist_ok=True)
     model.train()
 
-    max_steps = 200
+    max_steps = train_config.max_steps
     start = time.time()
     for step in range(max_steps):
         for x, y in loader:
-            x, y = x.to(device), y.to(device)
             logits, loss = model(x, y)
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-        if step % 20 == 0:
+        if step % train_config.log_interval == 0:
             print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
 
     save_path = os.path.join(CKPT_DIR, "best.pt")
     torch.save({"model": model.state_dict(), "config": model_config}, save_path)
     print(f"\nDone! {time.time()-start:.1f}s | Final loss: {loss.item():.4f}", flush=True)
     print(f"Saved to {save_path}", flush=True)
+
 
 if __name__ == "__main__":
     main()

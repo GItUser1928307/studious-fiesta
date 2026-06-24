@@ -67,3 +67,26 @@ SMALL_CONFIG = ModelConfig(
 )
 
 FULL_CONFIG = ModelConfig()
+
+
+def auto_config():
+    from system import get_avail_ram_gb
+    avail = get_avail_ram_gb()
+    if avail >= 3:
+        return SMALL_CONFIG
+    elif avail >= 1.5:
+        return ModelConfig(vocab_size=128, hidden_size=128, num_layers=4, num_heads=4, intermediate_size=256, max_seq_len=64)
+    else:
+        return ModelConfig(vocab_size=128, hidden_size=64, num_layers=3, num_heads=2, intermediate_size=128, max_seq_len=32)
+
+
+def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
+    from system import get_avail_ram_gb, get_cpu_threads
+    avail = get_avail_ram_gb()
+    threads = get_cpu_threads()
+    if avail >= 3:
+        return TrainConfig(batch_size=8, max_steps=500, learning_rate=3e-4, log_interval=25, save_interval=200, data_file=data_file, save_dir=save_dir)
+    elif avail >= 1.5:
+        return TrainConfig(batch_size=4, max_steps=300, learning_rate=5e-4, log_interval=25, save_interval=100, data_file=data_file, save_dir=save_dir)
+    else:
+        return TrainConfig(batch_size=2, max_steps=200, learning_rate=5e-4, log_interval=10, save_interval=100, data_file=data_file, save_dir=save_dir)

@@ -1,89 +1,71 @@
 #!/usr/bin/env python3
-"""
-Simple AI Chat - Just run this file!
-Works on your Lenovo G570 (4GB RAM, i3 CPU)
-"""
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import warnings
-warnings.filterwarnings('ignore')
-
-print("\n" + "="*60)
-print("  LOADING AI MODEL FROM HUGGINGFACE")
-print("  Your Laptop: 4GB RAM, Intel i3-2350M CPU")
-print("="*60)
-
-# Load the pre-trained model
-from transformers import pipeline
+"""AI Chat - Local model only"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 
-# Use CPU only, optimize for low memory
-torch.set_num_threads(2)
+from system import print_system_info
+from model import create_model
+from tokenizer import CharTokenizer
+from config import auto_config
 
-print("\nDownloading and loading model...")
-print("(First time: takes 2-5 minutes)\n")
+info = print_system_info()
+torch.set_num_threads(info["threads"])
 
-# TinyStories-33M - a real pre-trained language model
-# It understands English and generates coherent text
-pipe = pipeline(
-    "text-generation", 
-    model="roneneldan/TinyStories-33M",
-    tokenizer="EleutherAI/gpt-neo-125M",
-    device=-1  # CPU
-)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CKPT_PATH = os.path.join(os.path.dirname(SCRIPT_DIR), "quick_ckpt", "best.pt")
 
+config = auto_config()
+model = create_model(config)
+tokenizer = CharTokenizer()
+
+if os.path.exists(CKPT_PATH):
+    ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    print("Loaded trained weights!")
+else:
+    print("No trained weights found - using random init")
+
+model.eval()
+
+print("\n" + "="*60)
+print("  AI READY - Type prompts below. 'quit' to exit.")
 print("="*60)
-print("  AI MODEL READY!")
-print("="*60)
-print("\nThe model has been trained on millions of stories.")
-print("It understands English and produces coherent responses.\n")
-print("Commands:")
-print("  quit   - Exit")
-print("  clear - Clear chat history")
-print("-"*60)
 
-chat_history = []
+history = []
 
 while True:
     try:
         prompt = input("\nYou: ").strip()
-        
         if prompt.lower() == "quit":
-            print("\nGoodbye!")
             break
-        elif prompt.lower() == "clear":
-            chat_history = []
-            print("Chat cleared.")
+        if prompt.lower() == "clear":
+            history = []
+            print("Context cleared.")
             continue
-        elif not prompt:
+        if not prompt:
             continue
-        
-        # Build context from history
-        context = " ".join(chat_history[-3:])  # Last 3 messages
+
+        context = " ".join(history[-3:])
         full_prompt = context + " " + prompt if context else prompt
-        
-        print("AI is thinking...", end=" ", flush=True)
-        
-        # Generate response
-        result = pipe(
-            full_prompt,
-            max_new_tokens=80,
-            temperature=0.7,
-            top_p=0.92,
-            do_sample=True,
-            pad_token_id=50256
-        )
-        
-        response = result[0]["generated_text"][len(full_prompt):].strip()
-        
-        if response:
+
+        print("Thinking...", end=" ", flush=True)
+        ids = tokenizer.encode(full_prompt)
+        idx = torch.tensor([ids]).long()
+
+        with torch.no_grad():
+            out = model.generate(idx, max_new_tokens=80, temperature=0.7, top_k=40, top_p=0.92)
+
+        new_tokens = out[0].tolist()[len(ids):]
+        response = tokenizer.decode(new_tokens)
+
+        if response.strip():
             print(f"\nAI: {response}")
-            chat_history.append(prompt)
-            chat_history.append(response)
+            history.append(prompt)
+            history.append(response)
         else:
-            print("\nAI: (thinking...)")
-            
+            print("\nAI: [No response generated]")
+
     except KeyboardInterrupt:
-        print("\n\nInterrupted. Type 'quit' to exit.")
-    except Exception as e:
-        print(f"\nError: {e}")
+        print("\nGoodbye!")
+        break

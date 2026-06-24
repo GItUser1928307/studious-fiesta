@@ -1,104 +1,72 @@
 #!/usr/bin/env python3
-"""
-Better AI Chat - Uses more capable model
-Works on Lenovo G570 (4GB RAM, Intel i3 CPU)
-"""
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import warnings
-warnings.filterwarnings('ignore')
-
-print("\n" + "="*60)
-print("  LOADING AI MODEL FROM HUGGINGFACE")
-print("="*60)
-print("\nThis will download a pre-trained model (~200-400MB)")
-print("First time: 2-10 minutes depending on internet speed\n")
-
-from transformers import AutoTokenizer, AutoModelForCausalLM
+"""AI Chat - Local model only"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 
-# Optimize for your laptop
-torch.set_num_threads(2)
+from system import print_system_info, get_cpu_threads
+from model import create_model
+from tokenizer import CharTokenizer
+from config import auto_config
 
-# Try different models in order of preference
-models_to_try = [
-    # TinyStories-33M (story generator, works well)
-    ("roneneldan/TinyStories-33M", "EleutherAI/gpt-neo-125M"),
-    # GPT-2 small (124M, more general)
-    ("gpt2", "gpt2"),
-]
+info = print_system_info()
+torch.set_num_threads(info["threads"])
 
-model_name, tokenizer_name = models_to_try[0]
-print(f"Loading: {model_name}")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CKPT_PATH = os.path.join(os.path.dirname(SCRIPT_DIR), "quick_ckpt", "best.pt")
 
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-model = AutoModelForCausalLM.from_pretrained(model_name)
+config = auto_config()
+model = create_model(config)
+tokenizer = CharTokenizer()
+
+if os.path.exists(CKPT_PATH):
+    ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    print("Loaded trained weights!")
+else:
+    print("No trained weights found - using random init")
+
 model.eval()
 
-params = sum(p.numel() for p in model.parameters())
-print(f"Model loaded! {params:,} parameters ({params/1e6:.1f}M)")
-
+params = model.count_params()
+print(f"\nModel: {params:,} params ({params/1e6:.2f}M)")
 print("\n" + "="*60)
-print("  AI IS READY!")
+print("  AI READY - Type prompts below. 'quit' to exit.")
 print("="*60)
-print("\nThis is a real pre-trained language model that:")
-print("  - Understands English")
-print("  - Generates coherent text")
-print("  - Remembers context")
-print("\nType your prompts below. Type 'quit' to exit.")
-print("-"*60)
 
-chat_context = ""
+context = ""
 
 while True:
     try:
         prompt = input("\nYou: ").strip()
-        
         if prompt.lower() == "quit":
-            print("\nGoodbye!")
             break
-        elif prompt.lower() == "clear":
-            chat_context = ""
+        if prompt.lower() == "clear":
+            context = ""
             print("Context cleared.")
             continue
-        elif not prompt:
+        if not prompt:
             continue
-        
-        # Add prompt to context
-        if chat_context:
-            full_prompt = chat_context + " " + prompt
-        else:
-            full_prompt = prompt
-        
-        print("AI is thinking...", end=" ", flush=True)
-        
-        # Tokenize
-        inputs = tokenizer.encode(full_prompt, return_tensors="pt", truncation=True, max_length=512)
-        
-        # Generate
+
+        full_prompt = context + " " + prompt if context else prompt
+        ids = tokenizer.encode(full_prompt)
+        idx = torch.tensor([ids]).long()
+
+        print("Thinking...", end=" ", flush=True)
         with torch.no_grad():
-            outputs = model.generate(
-                inputs,
-                max_new_tokens=100,
-                temperature=0.8,
-                top_p=0.95,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.1
-            )
-        
-        # Get response
-        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        response_only = response[len(full_prompt):].strip()
-        
-        if response_only:
-            print(f"\nAI: {response_only}")
-            # Keep context (last 200 chars)
-            chat_context = (full_prompt + " " + response_only)[-300:]
+            out = model.generate(idx, max_new_tokens=80, temperature=0.8, top_k=40, top_p=0.95)
+
+        new_tokens = out[0].tolist()[len(ids):]
+        response = tokenizer.decode(new_tokens)
+
+        if response.strip():
+            print(f"\nAI: {response}")
+            context = full_prompt + " " + response
+            if len(tokenizer.encode(context)) > 500:
+                context = full_prompt[-200:] + " " + response
         else:
-            print("\nAI: (thinking...)")
-            
+            print("\nAI: [No response generated]")
+
     except KeyboardInterrupt:
-        print("\n\nInterrupted. Type 'quit' to exit.")
-    except Exception as e:
-        print(f"\nError: {e}")
+        print("\nGoodbye!")
+        break

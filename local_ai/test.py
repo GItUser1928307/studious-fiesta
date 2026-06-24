@@ -1,50 +1,47 @@
 #!/usr/bin/env python3
-"""Quick test - run this to see the AI working!"""
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import warnings
-warnings.filterwarnings('ignore')
-
-print("\n" + "="*60)
-print("QUICK TEST - Generating AI Text")
-print("="*60)
-
-from transformers import AutoTokenizer, AutoModelForCausalLM
+"""Quick test - local model only"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
-torch.set_num_threads(2)
 
-print("\nLoading model...")
-model = AutoModelForCausalLM.from_pretrained("roneneldan/TinyStories-33M")
-tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neo-125M")
+from system import print_system_info
+from model import create_model
+from tokenizer import CharTokenizer
+from config import auto_config
+
+info = print_system_info()
+torch.set_num_threads(info["threads"])
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CKPT_PATH = os.path.join(os.path.dirname(SCRIPT_DIR), "quick_ckpt", "best.pt")
+
+config = auto_config()
+model = create_model(config)
+tokenizer = CharTokenizer()
+
+if os.path.exists(CKPT_PATH):
+    ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model"])
+    print("Loaded trained weights!")
+else:
+    print("No trained weights - using random init")
+
 model.eval()
-print(f"Model: {sum(p.numel() for p in model.parameters()):,} parameters")
+print(f"Model: {model.count_params():,} params ({model.count_params()/1e6:.2f}M)")
 
 print("\n" + "-"*60)
 print("GENERATING TEXT")
 print("-"*60)
 
-test_prompts = [
-    "Once upon a time there was a little dragon who",
-    "The magic forest held many secrets, and one day",
-    "A brave knight went on an adventure to find"
-]
-
-for prompt in test_prompts:
+for prompt in ["Once upon a time", "The cat went to", "Hello there"]:
     print(f"\n>>> {prompt}")
     print("-" * 40)
-    inputs = tokenizer.encode(prompt, return_tensors="pt")
+    ids = tokenizer.encode(prompt)
+    idx = torch.tensor([ids]).long()
     with torch.no_grad():
-        out = model.generate(
-            inputs,
-            max_new_tokens=60,
-            temperature=0.7,
-            top_p=0.92,
-            do_sample=True,
-            pad_token_id=tokenizer.eos_token_id
-        )
-    print(tokenizer.decode(out[0], skip_special_tokens=True))
+        out = model.generate(idx, max_new_tokens=60, temperature=0.7, top_k=40, top_p=0.92)
+    print(tokenizer.decode(out[0].tolist()))
 
 print("\n" + "="*60)
-print("TEST COMPLETE! Your AI model is working!")
+print("TEST COMPLETE!")
 print("="*60)
-print("\nTo chat interactively, run: python start.py")
