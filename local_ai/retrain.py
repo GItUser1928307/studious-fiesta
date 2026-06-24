@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from model import create_model
-from tokenizer import WordTokenizer
+from tokenizer import get_tokenizer, save_tokenizer, list_tokenizers
 from config import auto_config_from_data, auto_train_config
 from system import print_system_info, get_cpu_threads
 
@@ -38,8 +38,15 @@ def main():
     info = print_system_info()
     torch.set_num_threads(info["threads"])
 
-    tokenizer = WordTokenizer.build(DATA_FILE)
-    print(f"Tokenizer: {tokenizer.vocab_size} words", flush=True)
+    tokenizer_name = "word"
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--tokenizer" and i + 1 < len(args):
+            tokenizer_name = args[i + 1]
+
+    print(f"Tokenizer: {tokenizer_name}", flush=True)
+    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
+    print(f"Vocab size: {tokenizer.vocab_size}", flush=True)
     print(tokenizer.vocab_info(), flush=True)
 
     model_config = auto_config_from_data(DATA_FILE)
@@ -73,8 +80,8 @@ def main():
                 break
 
     save_path = os.path.join(CKPT_DIR, "best.pt")
-    torch.save({"model": model.state_dict(), "config": model_config}, save_path)
-    tokenizer.save(os.path.join(CKPT_DIR, "tokenizer.json"))
+    torch.save({"model": model.state_dict(), "config": model_config, "tokenizer": tokenizer_name}, save_path)
+    save_tokenizer(tokenizer, os.path.join(CKPT_DIR, "tokenizer.json"))
     print(f"\nDone! {time.time()-start:.1f}s | Final loss: {loss.item():.4f}", flush=True)
     print(f"Saved to {save_path}", flush=True)
 

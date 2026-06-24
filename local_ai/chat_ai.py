@@ -6,7 +6,7 @@ import torch
 
 from system import print_system_info, get_cpu_threads
 from model import create_model
-from tokenizer import WordTokenizer, CharTokenizer
+from tokenizer import load_tokenizer, get_tokenizer
 from config import auto_config_from_data
 
 info = print_system_info()
@@ -19,12 +19,16 @@ TOKENIZER_PATH = os.path.join(PARENT_DIR, "quick_ckpt", "tokenizer.json")
 DATA_FILE = os.path.join(PARENT_DIR, "quick_train_data.txt")
 
 if os.path.exists(TOKENIZER_PATH):
-    tokenizer = WordTokenizer.load(TOKENIZER_PATH)
+    tokenizer = load_tokenizer(TOKENIZER_PATH)
+    config = auto_config_from_data(DATA_FILE)
+elif os.path.exists(CKPT_PATH):
+    ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+    tokenizer_name = ckpt.get("tokenizer", "word")
+    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
     config = auto_config_from_data(DATA_FILE)
 else:
-    tokenizer = CharTokenizer()
-    from config import auto_config
-    config = auto_config()
+    tokenizer = get_tokenizer("word", data_file=DATA_FILE)
+    config = auto_config_from_data(DATA_FILE)
 
 model = create_model(config)
 

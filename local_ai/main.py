@@ -6,8 +6,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from model import create_model
-from tokenizer import WordTokenizer, CharTokenizer, GPT2Tokenizer
-from train import train, train_quick, train_full
+from tokenizer import list_tokenizers
 from generate import generate_text, interactive, load_model_and_tokenizer
 from config import ModelConfig, SMALL_CONFIG
 
@@ -31,16 +30,18 @@ def main():
     if not args:
         print("\nUsage: python main.py <command> [options]")
         print("Commands:")
-        print("  quick         - Quick demo: train a char-level model on sample text")
-        print("  full          - Full training with BPE tokenizer (provide data.txt)")
+        print("  info          - Show model architecture info")
         print("  generate      - Generate text from a trained model")
         print("  chat          - Interactive chat mode")
-        print("  info          - Show model architecture info")
+        print(f"  tokenizers    - List available tokenizers ({', '.join(list_tokenizers())})")
+        print("\nOptions:")
+        print("  --tokenizer NAME   Tokenizer to use (word, whitespace, char, gpt2)")
+        print("  --model PATH       Path to model checkpoint")
+        print("  --prompt TEXT      Text prompt for generation")
         print("\nExamples:")
-        print("  python main.py quick")
-        print("  python main.py generate --prompt \"Once upon a time\"")
-        print("  python main.py chat")
         print("  python main.py info")
+        print("  python main.py generate --prompt \"hello\"")
+        print("  python main.py chat")
         return
 
     cmd = args[0]
@@ -59,28 +60,17 @@ def main():
         print(f"  Weight tying: {model.config.tie_embeddings}")
         print(f"  Activation: SwiGLU + RoPE + RMSNorm")
 
-    elif cmd == "quick":
-        model, tokenizer = train_quick(device)
-        print("\n--- Quick test ---")
-        for prompt in ["Once upon", "Lily went", "The cat"]:
-            out = generate_text(model, tokenizer, prompt, max_new=50, device=device)
-            print(f"Prompt: {prompt!r}")
-            print(f"Output: {out}\n")
-
-    elif cmd == "full":
-        if not os.path.exists("data.txt"):
-            print("Error: data.txt not found. Create a text file with training data.")
-            return
-        model, tokenizer = train_full(device)
-        print("\n--- Quick test ---")
-        for prompt in ["The meaning"]:
-            out = generate_text(model, tokenizer, prompt, max_new=50, device=device)
-            print(f"Prompt: {prompt!r}")
-            print(f"Output: {out}\n")
+    elif cmd == "tokenizers":
+        print("\nAvailable tokenizers:")
+        for name in list_tokenizers():
+            print(f"  {name}")
+        print("\nUsage: python retrain.py --tokenizer <name>")
+        print("       python main.py generate --tokenizer <name>")
 
     elif cmd == "generate":
         model_path = "quick_ckpt/best.pt"
         prompt = "hello how are you"
+        tokenizer_name = None
         i = 1
         while i < len(args):
             if args[i] == "--model" and i + 1 < len(args):
@@ -88,6 +78,9 @@ def main():
                 i += 2
             elif args[i] == "--prompt" and i + 1 < len(args):
                 prompt = args[i + 1]
+                i += 2
+            elif args[i] == "--tokenizer" and i + 1 < len(args):
+                tokenizer_name = args[i + 1]
                 i += 2
             else:
                 i += 1

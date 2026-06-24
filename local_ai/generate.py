@@ -1,11 +1,11 @@
 import os
 import torch
 from model import create_model
-from tokenizer import WordTokenizer, CharTokenizer, GPT2Tokenizer
+from tokenizer import load_tokenizer, get_tokenizer, WordTokenizer
 from config import ModelConfig
 
 
-def load_model_and_tokenizer(model_path: str, use_char: bool = False, device: str = "cpu"):
+def load_model_and_tokenizer(model_path: str, device: str = "cpu"):
     from config import SMALL_CONFIG
     checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
     config_dict = checkpoint.get("config", None)
@@ -20,11 +20,11 @@ def load_model_and_tokenizer(model_path: str, use_char: bool = False, device: st
 
     tokenizer_path = os.path.join(os.path.dirname(model_path), "tokenizer.json")
     if os.path.exists(tokenizer_path):
-        tokenizer = WordTokenizer.load(tokenizer_path)
-    elif use_char:
-        tokenizer = CharTokenizer()
+        tokenizer = load_tokenizer(tokenizer_path)
     else:
-        tokenizer = GPT2Tokenizer()
+        tokenizer_name = checkpoint.get("tokenizer", "word")
+        data_file = os.path.join(os.path.dirname(os.path.dirname(model_path)), "quick_train_data.txt")
+        tokenizer = get_tokenizer(tokenizer_name, data_file=data_file)
     return model, tokenizer
 
 

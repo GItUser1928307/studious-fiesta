@@ -244,3 +244,123 @@ class GPT2Tokenizer(BaseTokenizer):
 
     def decode(self, ids: list[int]) -> str:
         return self.enc.decode(ids)
+
+
+class WhitespaceTokenizer(BaseTokenizer):
+    """Simple whitespace tokenizer. Fast, no punctuation splitting."""
+
+    SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<q>", "<a>"]
+
+    def __init__(self, word_to_id: dict):
+        self.word_to_id = word_to_id
+        self.id_to_word = {v: k for k, v in word_to_id.items()}
+        self.vocab_size = len(word_to_id)
+        self.bos_token_id = self.word_to_id["<bos>"]
+        self.eos_token_id = self.word_to_id["<eos>"]
+        self.pad_token_id = self.word_to_id["<pad>"]
+        self.unk_token_id = self.word_to_id["<unk>"]
+        self.q_token_id = self.word_to_id["<q>"]
+        self.a_token_id = self.word_to_id["<a>"]
+
+    @classmethod
+    def build(cls, data_file: str, min_count: int = 1) -> "WhitespaceTokenizer":
+        counter = Counter()
+        with open(data_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                words = cls.tokenize(line)
+                counter.update(words)
+        filtered = {w for w, c in counter.items() if c >= min_count and w not in cls.SPECIAL_TOKENS}
+        word_to_id = {}
+        for i, tok in enumerate(cls.SPECIAL_TOKENS):
+            word_to_id[tok] = i
+        for i, word in enumerate(sorted(filtered)):
+            word_to_id[word] = i + len(cls.SPECIAL_TOKENS)
+        return cls(word_to_id)
+
+    @staticmethod
+    def tokenize(text: str) -> list:
+        return text.split()
+
+    def encode(self, text: str) -> list[int]:
+        ids = [self.bos_token_id]
+        for token in self.tokenize(text):
+            ids.append(self.word_to_id.get(token, self.unk_token_id))
+        ids.append(self.eos_token_id)
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        words = []
+        for i in ids:
+            if i in self.id_to_word and i not in (
+                self.bos_token_id, self.eos_token_id, self.pad_token_id,
+                self.q_token_id, self.a_token_id
+            ):
+                words.append(self.id_to_word[i])
+        return " ".join(words)
+
+    def vocab_info(self) -> str:
+        lines = [f"Vocab size: {self.vocab_size}"]
+        lines.append(f"  Special: {self.SPECIAL_TOKENS}")
+        lines.append(f"  Words: {self.vocab_size - len(self.SPECIAL_TOKENS)}")
+        return "\n".join(lines)
+
+    def save(self, path: str):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.word_to_id, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "WhitespaceTokenizer":
+        import json
+        with open(path, encoding="utf-8") as f:
+            word_to_id = json.load(f)
+        return cls(word_to_id)
+
+
+TOKENIZER_REGISTRY = {
+    "word": WordTokenizer,
+    "whitespace": WhitespaceTokenizer,
+    "char": CharTokenizer,
+    "gpt2": GPT2Tokenizer,
+}
+
+
+def get_tokenizer(name: str, **kwargs):
+    if name not in TOKENIZER_REGISTRY:
+        raise ValueError(f"Unknown tokenizer: {name}. Available: {list(TOKENIZER_REGISTRY.keys())}")
+    cls = TOKENIZER_REGISTRY[name]
+    if name in ("word", "whitespace"):
+        return cls.build(kwargs["data_file"])
+    return cls()
+
+
+def list_tokenizers():
+    return list(TOKENIZER_REGISTRY.keys())
+
+
+def save_tokenizer(tokenizer, path: str):
+    import json
+    type_name = None
+    for name, cls in TOKENIZER_REGISTRY.items():
+        if isinstance(tokenizer, cls):
+            type_name = name
+            break
+    if type_name in ("word", "whitespace"):
+        data = {"type": type_name, "vocab": tokenizer.word_to_id}
+    else:
+        data = {"type": type_name or "char"}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def load_tokenizer(path: str, data_file: str = None):
+    import json
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    type_name = data.get("type", "word")
+    if type_name in ("word", "whitespace") and "vocab" in data:
+        return TOKENIZER_REGISTRY[type_name](data["vocab"])
+    return get_tokenizer(type_name, data_file=data_file)

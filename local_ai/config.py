@@ -55,6 +55,7 @@ class TrainConfig:
     gradient_clip: float = 1.0
     save_dir: str = "checkpoints"
     data_file: str = "data.txt"
+    tokenizer_name: str = "word"
 
 
 SMALL_CONFIG = ModelConfig(
