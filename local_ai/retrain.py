@@ -58,15 +58,19 @@ def main():
 
     max_steps = train_config.max_steps
     start = time.time()
-    for step in range(max_steps):
+    step = 0
+    while step < max_steps:
         for x, y in loader:
             logits, loss = model(x, y)
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-        if step % train_config.log_interval == 0:
-            print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
+            step += 1
+            if step % train_config.log_interval == 0:
+                print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
+            if step >= max_steps:
+                break
 
     save_path = os.path.join(CKPT_DIR, "best.pt")
     torch.save({"model": model.state_dict(), "config": model_config}, save_path)

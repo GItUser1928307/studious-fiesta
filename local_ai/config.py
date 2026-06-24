@@ -79,13 +79,13 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 64):
     vocab_size = tok.vocab_size
     return ModelConfig(
         vocab_size=vocab_size,
-        hidden_size=128,
-        num_layers=4,
-        num_heads=4,
-        intermediate_size=256,
+        hidden_size=64,
+        num_layers=2,
+        num_heads=2,
+        intermediate_size=128,
         max_seq_len=max_seq_len,
     )
 
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
-    return TrainConfig(batch_size=32, max_steps=1000, learning_rate=3e-4, log_interval=25, save_interval=200, data_file=data_file, save_dir=save_dir)
+    return TrainConfig(batch_size=32, max_steps=200, learning_rate=5e-4, log_interval=25, save_interval=100, data_file=data_file, save_dir=save_dir)
