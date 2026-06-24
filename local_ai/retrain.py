@@ -53,10 +53,13 @@ class TextDataset(Dataset):
         input_ids, target_ids = self.samples[idx]
         full = input_ids + target_ids
         full = full[:self.seq_len + 1]
-        x = torch.tensor(full[:-1], dtype=torch.long)
-        y = torch.tensor(full[1:], dtype=torch.long)
-        mask = torch.zeros(len(full) - 1, dtype=torch.bool)
-        mask[len(input_ids) - 1:] = True
+        x = torch.zeros(self.seq_len, dtype=torch.long)
+        y = torch.zeros(self.seq_len, dtype=torch.long)
+        mask = torch.zeros(self.seq_len, dtype=torch.bool)
+        n = len(full) - 1
+        x[:n] = torch.tensor(full[:-1], dtype=torch.long)
+        y[:n] = torch.tensor(full[1:], dtype=torch.long)
+        mask[len(input_ids) - 1: n] = True
         return x, y, mask
 
 
