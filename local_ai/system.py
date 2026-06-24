@@ -5,8 +5,7 @@ import torch
 
 
 def get_cpu_threads():
-    count = os.cpu_count() or 2
-    return max(1, count - 1) if count > 2 else count
+    return os.cpu_count() or 2
 
 
 def get_ram_gb():
