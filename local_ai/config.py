@@ -70,14 +70,7 @@ FULL_CONFIG = ModelConfig()
 
 
 def auto_config():
-    from system import get_avail_ram_gb
-    avail = get_avail_ram_gb()
-    if avail >= 3:
-        return ModelConfig(vocab_size=128, hidden_size=192, num_layers=4, num_heads=6, intermediate_size=512, max_seq_len=128)
-    elif avail >= 1.5:
-        return ModelConfig(vocab_size=128, hidden_size=128, num_layers=4, num_heads=4, intermediate_size=256, max_seq_len=64)
-    else:
-        return ModelConfig(vocab_size=128, hidden_size=64, num_layers=3, num_heads=2, intermediate_size=128, max_seq_len=32)
+    return ModelConfig(vocab_size=128, hidden_size=32, num_layers=3, num_heads=2, intermediate_size=80, max_seq_len=32)
 
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
