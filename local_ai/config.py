@@ -70,9 +70,9 @@ FULL_CONFIG = ModelConfig()
 
 
 def auto_config():
-    return ModelConfig(vocab_size=128, hidden_size=32, num_layers=3, num_heads=2, intermediate_size=64, max_seq_len=16)
+    return ModelConfig(vocab_size=128, hidden_size=384, num_layers=9, num_heads=6, intermediate_size=1024, max_seq_len=64)
 
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
     from system import get_avail_ram_gb
-    return TrainConfig(batch_size=32, max_steps=150, learning_rate=5e-4, log_interval=10, save_interval=50, data_file=data_file, save_dir=save_dir)
+    return TrainConfig(batch_size=16, max_steps=150, learning_rate=3e-4, log_interval=10, save_interval=50, data_file=data_file, save_dir=save_dir)
