@@ -58,12 +58,12 @@ class TrainConfig:
 
 
 SMALL_CONFIG = ModelConfig(
-    vocab_size=128,
-    hidden_size=256,
+    vocab_size=98,
+    hidden_size=128,
     num_layers=6,
-    num_heads=4,
-    intermediate_size=1024,
-    max_seq_len=256,
+    num_heads=2,
+    intermediate_size=512,
+    max_seq_len=128,
 )
 
 FULL_CONFIG = ModelConfig()
@@ -75,4 +75,4 @@ def auto_config():
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
     from system import get_avail_ram_gb
-    return TrainConfig(batch_size=16, max_steps=150, learning_rate=3e-4, log_interval=10, save_interval=50, data_file=data_file, save_dir=save_dir)
+    return TrainConfig(batch_size=8, max_steps=150, learning_rate=3e-4, log_interval=10, save_interval=50, data_file=data_file, save_dir=save_dir)
