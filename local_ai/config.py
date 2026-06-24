@@ -70,7 +70,7 @@ FULL_CONFIG = ModelConfig()
 
 
 def auto_config():
-    return ModelConfig(vocab_size=98, hidden_size=48, num_layers=6, num_heads=2, intermediate_size=96, max_seq_len=32)
+    return ModelConfig(vocab_size=99, hidden_size=48, num_layers=6, num_heads=2, intermediate_size=96, max_seq_len=32)
 
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
