@@ -75,4 +75,4 @@ def auto_config():
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
     from system import get_avail_ram_gb
-    return TrainConfig(batch_size=64, max_steps=500, learning_rate=1e-3, log_interval=25, save_interval=100, data_file=data_file, save_dir=save_dir)
+    return TrainConfig(batch_size=64, max_steps=1000, learning_rate=3e-4, log_interval=25, save_interval=200, data_file=data_file, save_dir=save_dir)
