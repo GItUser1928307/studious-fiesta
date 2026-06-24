@@ -48,7 +48,7 @@ class BaseTokenizer:
 class WordTokenizer(BaseTokenizer):
     """Word-level tokenizer. Splits on whitespace, builds vocab from data."""
 
-    SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>"]
+    SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<q>", "<a>"]
 
     def __init__(self, word_to_id: dict):
         self.word_to_id = word_to_id
@@ -58,6 +58,8 @@ class WordTokenizer(BaseTokenizer):
         self.eos_token_id = self.word_to_id["<eos>"]
         self.pad_token_id = self.word_to_id["<pad>"]
         self.unk_token_id = self.word_to_id["<unk>"]
+        self.q_token_id = self.word_to_id["<q>"]
+        self.a_token_id = self.word_to_id["<a>"]
 
     @classmethod
     def build(cls, data_file: str, min_count: int = 1) -> "WordTokenizer":
@@ -67,7 +69,7 @@ class WordTokenizer(BaseTokenizer):
                 line = line.strip()
                 if not line:
                     continue
-                words = line.lower().split()
+                words = cls.tokenize(line)
                 counter.update(words)
 
         filtered = {w for w, c in counter.items() if c >= min_count}
@@ -80,10 +82,21 @@ class WordTokenizer(BaseTokenizer):
 
         return cls(word_to_id)
 
+    @staticmethod
+    def tokenize(text: str) -> list:
+        tokens = []
+        for word in text.lower().split():
+            if word in ("<q>", "<a>"):
+                tokens.append(word)
+                continue
+            parts = re.findall(r"\w+|[^\w\s]", word)
+            tokens.extend(parts)
+        return tokens
+
     def encode(self, text: str) -> list[int]:
         ids = [self.bos_token_id]
-        for word in text.lower().split():
-            ids.append(self.word_to_id.get(word, self.unk_token_id))
+        for token in self.tokenize(text):
+            ids.append(self.word_to_id.get(token, self.unk_token_id))
         ids.append(self.eos_token_id)
         return ids
 
