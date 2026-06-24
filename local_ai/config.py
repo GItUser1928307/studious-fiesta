@@ -85,8 +85,8 @@ def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
     avail = get_avail_ram_gb()
     threads = get_cpu_threads()
     if avail >= 3:
-        return TrainConfig(batch_size=8, max_steps=500, learning_rate=3e-4, log_interval=25, save_interval=200, data_file=data_file, save_dir=save_dir)
+        return TrainConfig(batch_size=16, max_steps=2000, learning_rate=3e-4, log_interval=50, save_interval=500, data_file=data_file, save_dir=save_dir)
     elif avail >= 1.5:
-        return TrainConfig(batch_size=4, max_steps=300, learning_rate=5e-4, log_interval=25, save_interval=100, data_file=data_file, save_dir=save_dir)
+        return TrainConfig(batch_size=8, max_steps=1500, learning_rate=5e-4, log_interval=50, save_interval=300, data_file=data_file, save_dir=save_dir)
     else:
-        return TrainConfig(batch_size=2, max_steps=200, learning_rate=5e-4, log_interval=10, save_interval=100, data_file=data_file, save_dir=save_dir)
+        return TrainConfig(batch_size=4, max_steps=1000, learning_rate=5e-4, log_interval=25, save_interval=200, data_file=data_file, save_dir=save_dir)

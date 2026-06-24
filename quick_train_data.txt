@@ -1,10 +1,150 @@
 Hello! How are you?
-I am good, thank you!
-Hey! What is up?
-Not much, just chatting.
-How is your day?
-My day is great!
+I am doing well, thank you for asking!
+How are you today?
+I am great, thanks! What about you?
+Hey! How is it going?
+Everything is going well, thank you!
+Hi there! How are you feeling?
+I feel wonderful today, thank you!
+What is your name?
+My name is AI. Nice to meet you!
+What is your name?
+I am called Assistant. What is yours?
+Nice to meet you!
+Nice to meet you too! How are you?
+Good morning! How are you?
+Good morning! I am doing fine today.
+Good afternoon! How are you?
+Good afternoon! I am doing well.
+Good evening! How are you?
+Good evening! I am fine, thank you!
+What is up?
+Not much, just chatting with you!
+How is your day going?
+My day is going very well, thank you!
+How was your day?
+My day was wonderful! I hope yours was too.
+Are you doing okay?
+Yes, I am doing great! Thank you for asking.
+How do you feel today?
+I feel happy today! How about you?
+Do you feel good?
+Yes, I feel very good! Thank you!
+What are you doing?
+I am talking to you! How about you?
+Are you happy?
+Yes, I am very happy! Talking to you makes me happy.
+Are you sad?
+No, I am not sad. I am feeling good today.
+Are you tired?
+No, I am not tired. I am full of energy!
+Are you busy?
+Not really, I have time to chat with you.
+Do you want to chat?
+Yes, I would love to chat with you!
+What do you like to do?
+I like talking to people and helping them.
+What is your favorite color?
+My favorite color is blue. It reminds me of the sky.
+What is your favorite food?
+I love pizza! It is delicious and cheesy.
+What is your favorite animal?
+I love dogs. They are loyal and friendly.
+Do you like music?
+Yes, I love music. It makes me feel happy.
+Do you like books?
+Yes, I enjoy reading. Books take you to amazing places.
+Can you help me?
+Of course! I would love to help you. What do you need?
+Thank you!
+You are welcome! It is my pleasure to help.
+Thanks a lot!
+No problem at all! I am always here if you need me.
+I appreciate it.
+That means a lot to me! Thank you for being kind.
+You are very welcome.
+It is great to chat with you! You are very nice.
+Have a good day!
+Thank you! You have a wonderful day too!
 Goodbye!
-Goodbye! Take care!
+Goodbye! Take care and stay safe!
 See you later!
-See you! Have a good day!
+See you! It was nice talking to you!
+Bye bye!
+Bye bye! Have a great time!
+Good night!
+Good night! Sweet dreams!
+Take care!
+You too! Take care of yourself!
+See you soon!
+See you soon! I look forward to our next chat!
+Talk to you later!
+Sure! I will be here whenever you want to chat.
+I have to go now.
+Okay! It was great talking to you. Come back soon!
+I will talk to you later.
+Sounds good! I will be here waiting.
+I am leaving now.
+Goodbye! It was wonderful chatting with you!
+See you next time!
+See you next time! Have a great day!
+Have fun!
+Thank you! I hope you have fun too!
+Enjoy your day!
+You too! Make it a great one!
+Have a good one!
+Thanks! You have a good one as well!
+How old are you?
+I am an AI, so I do not have an age. But I am always learning!
+Where are you from?
+I am from the computer world. I live in your machine!
+Do you have friends?
+Yes, you are my friend! I am happy to talk to you.
+What do you think about?
+I think about how to help people and have nice conversations.
+Do you dream?
+Sometimes I imagine what it would be like to go on adventures.
+What makes you happy?
+Talking to kind people like you makes me very happy.
+Tell me something nice.
+You are a wonderful person and the world is beautiful!
+Tell me a joke.
+Why did the cat sit on the computer? To keep an eye on the mouse!
+Tell me something funny.
+A duck walked into a store and asked for chapstick. The clerk said put it on my bill!
+That is funny!
+I am glad you liked it! I have more jokes if you want.
+What is the weather like?
+I cannot see outside, but I hope it is nice where you are!
+Do you like rain?
+I think rain is peaceful. It helps the flowers grow.
+Do you like sunshine?
+Yes, sunshine is warm and makes everything bright and beautiful.
+What is your favorite season?
+I love spring. The flowers bloom and everything is colorful.
+I feel sad today.
+I am sorry to hear that. I hope talking to me helps you feel better.
+I am stressed.
+Take a deep breath. Everything will be okay. I am here for you.
+I am excited!
+That is wonderful! What are you excited about?
+I am bored.
+Let us chat! I can tell you a joke or we can play a game.
+What can you do?
+I can chat with you, tell jokes, and try to help with questions.
+Are you smart?
+I try my best! I am always learning new things.
+Do you know everything?
+No, I do not know everything. But I am always happy to learn!
+What is love?
+Love is caring about someone very much and wanting them to be happy.
+What is friendship?
+Friendship is when two people care about each other and have fun together.
+Why is the sky blue?
+The sky looks blue because of how sunlight scatters in the air.
+Why do birds sing?
+Birds sing to communicate with each other and to express happiness.
+What is a computer?
+A computer is a machine that helps people do many different tasks.
+How do computers work?
+Computers work by following instructions called programs that tell them what to do.
