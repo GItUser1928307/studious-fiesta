@@ -50,6 +50,56 @@ class WordTokenizer(BaseTokenizer):
 
     SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<q>", "<a>"]
 
+    CONTRACTIONS = {
+        "don't": "do n't",
+        "doesn't": "does n't",
+        "didn't": "did n't",
+        "isn't": "is n't",
+        "wasn't": "was n't",
+        "weren't": "were n't",
+        "won't": "will n't",
+        "wouldn't": "would n't",
+        "can't": "can n't",
+        "couldn't": "could n't",
+        "shouldn't": "should n't",
+        "haven't": "have n't",
+        "hasn't": "has n't",
+        "hadn't": "had n't",
+        "aren't": "are n't",
+        "i'm": "i 'm",
+        "you're": "you 're",
+        "he's": "he 's",
+        "she's": "she 's",
+        "it's": "it 's",
+        "we're": "we 're",
+        "they're": "they 're",
+        "i've": "i 've",
+        "you've": "you 've",
+        "we've": "we 've",
+        "they've": "they 've",
+        "i'll": "i 'll",
+        "you'll": "you 'll",
+        "he'll": "he 'll",
+        "she'll": "she 'll",
+        "we'll": "we 'll",
+        "they'll": "they 'll",
+        "i'd": "i 'd",
+        "you'd": "you 'd",
+        "he'd": "he 'd",
+        "she'd": "she 'd",
+        "we'd": "we 'd",
+        "they'd": "they 'd",
+        "that's": "that 's",
+        "who's": "who 's",
+        "what's": "what 's",
+        "where's": "where 's",
+        "when's": "when 's",
+        "how's": "how 's",
+        "there's": "there 's",
+        "here's": "here 's",
+        "let's": "let 's",
+    }
+
     def __init__(self, word_to_id: dict):
         self.word_to_id = word_to_id
         self.id_to_word = {v: k for k, v in word_to_id.items()}
@@ -85,12 +135,19 @@ class WordTokenizer(BaseTokenizer):
     @staticmethod
     def tokenize(text: str) -> list:
         tokens = []
-        for word in text.lower().split():
+        for word in text.split():
             if word in ("<q>", "<a>"):
                 tokens.append(word)
                 continue
-            parts = re.findall(r"\w+|[^\w\s]", word)
-            tokens.extend(parts)
+            lower = word.lower()
+            if lower in WordTokenizer.CONTRACTIONS:
+                parts = WordTokenizer.CONTRACTIONS[lower].split()
+                if parts[0] != lower:
+                    parts[0] = word[:len(parts[0])]
+                tokens.extend(parts)
+            else:
+                parts = re.findall(r"\w+|[^\w\s]", word)
+                tokens.extend(parts)
         return tokens
 
     def encode(self, text: str) -> list[int]:
