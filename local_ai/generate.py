@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 from model import create_model
 from tokenizer import load_tokenizer, get_tokenizer, WordTokenizer
@@ -28,13 +29,32 @@ def load_model_and_tokenizer(model_path: str, device: str = "cpu"):
     return model, tokenizer
 
 
+def clean_response(text: str) -> str:
+    stop_pattern = re.compile(r"\b(what is|what are|what was|what were|how do|how does|how did|how is|how are|why do|why does|why is|why are|can you|do you|are you|tell me|what do|what can|what makes|what is a|what is an|what is the)\b", re.IGNORECASE)
+    match = stop_pattern.search(text)
+    if match:
+        text = text[:match.start()]
+    junk = ["<bos>", "<eos>", "<pad>", "<unk>", "<q>", "<a>"]
+    for j in junk:
+        text = text.replace(j, " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and text[-1] not in ".!?":
+        text = text.rstrip(" ,;:-")
+    return text
+
+
 def generate_text(model, tokenizer, prompt: str, max_new: int = 100, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, device: str = "cpu"):
-    input_ids = tokenizer.encode(prompt)
+    q_tokens = [t for t in tokenizer.tokenize(prompt) if t not in ("<q>", "<a>")]
+    input_ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
+    input_ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
+    input_ids.append(tokenizer.a_token_id)
+
     idx = torch.tensor([input_ids], dtype=torch.long).to(device)
-    output = model.generate(idx, max_new, temperature, top_k, top_p)
+    output = model.generate(idx, max_new, temperature=0.3, top_k=20, top_p=0.8, eos_token_id=tokenizer.eos_token_id)
     generated = output[0].tolist()
     new_tokens = generated[len(input_ids):]
-    return tokenizer.decode(new_tokens)
+    raw = tokenizer.decode(new_tokens)
+    return clean_response(raw)
 
 
 def interactive(model, tokenizer, device: str):
@@ -53,14 +73,18 @@ def interactive(model, tokenizer, device: str):
                 continue
 
             full_prompt = prompt if context is None else context + " " + prompt
-            input_ids = tokenizer.encode(full_prompt)
+            q_tokens = [t for t in tokenizer.tokenize(full_prompt) if t not in ("<q>", "<a>")]
+            input_ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
+            input_ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
+            input_ids.append(tokenizer.a_token_id)
+
             idx = torch.tensor([input_ids], dtype=torch.long).to(device)
-            output = model.generate(idx, max_new_tokens=80, temperature=0.7, top_k=40, top_p=0.9)
+            output = model.generate(idx, max_new_tokens=80, temperature=0.7, top_k=40, top_p=0.9, eos_token_id=tokenizer.eos_token_id)
             generated = output[0].tolist()
             new_tokens = generated[len(input_ids):]
-            response = tokenizer.decode(new_tokens)
+            response = clean_response(tokenizer.decode(new_tokens))
             print(f"AI: {response}")
-            context = full_prompt + " " + response
+            context = prompt + " " + response
             if len(tokenizer.encode(context)) > 500:
                 context = None
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """AI Chat - Local model only"""
-import os, sys
+import os, sys, re
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 
@@ -8,6 +8,7 @@ from system import print_system_info, get_cpu_threads
 from model import create_model
 from tokenizer import load_tokenizer, get_tokenizer
 from config import auto_config_from_data
+from generate import clean_response
 
 info = print_system_info()
 torch.set_num_threads(info["threads"])
@@ -63,15 +64,20 @@ while True:
             continue
 
         full_prompt = context + " " + prompt if context else prompt
-        ids = tokenizer.encode(full_prompt)
+
+        q_tokens = [t for t in tokenizer.tokenize(full_prompt) if t not in ("<q>", "<a>")]
+        ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
+        ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
+        ids.append(tokenizer.a_token_id)
+
         idx = torch.tensor([ids]).long()
 
         print("Thinking...", end=" ", flush=True)
         with torch.no_grad():
-            out = model.generate(idx, max_new_tokens=80, temperature=0.8, top_k=40, top_p=0.95)
+            out = model.generate(idx, max_new_tokens=80, temperature=0.3, top_k=20, top_p=0.8, eos_token_id=tokenizer.eos_token_id)
 
         new_tokens = out[0].tolist()[len(ids):]
-        response = tokenizer.decode(new_tokens)
+        response = clean_response(tokenizer.decode(new_tokens))
 
         if response.strip():
             print(f"\nAI: {response}")

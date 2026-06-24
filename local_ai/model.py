@@ -102,7 +102,7 @@ class CustomTransformer(nn.Module):
             if isinstance(m, (nn.Linear, nn.Embedding)):
                 nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
-    def forward(self, x: torch.Tensor, targets: torch.Tensor = None):
+    def forward(self, x: torch.Tensor, targets: torch.Tensor = None, loss_mask: torch.Tensor = None):
         x = self.token_embedding(x)
         for block in self.blocks:
             x = block(x)
@@ -110,11 +110,17 @@ class CustomTransformer(nn.Module):
         logits = self.lm_head(x)
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            if loss_mask is not None:
+                logits_flat = logits.view(-1, logits.size(-1))
+                targets_flat = targets.view(-1)
+                mask_flat = loss_mask.view(-1).bool()
+                loss = F.cross_entropy(logits_flat[mask_flat], targets_flat[mask_flat])
+            else:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, eos_token_id: int = None):
         self.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.config.max_seq_len:]
@@ -135,6 +141,8 @@ class CustomTransformer(nn.Module):
             probs = F.softmax(logits, dim=-1)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat([idx, idx_next], dim=1)
+            if eos_token_id is not None and idx_next.item() == eos_token_id:
+                break
         return idx
 
     def count_params(self):

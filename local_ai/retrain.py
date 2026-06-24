@@ -21,17 +21,43 @@ class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer, seq_len):
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-        self.tokens = []
-        for line in lines:
-            line = line.strip()
-            if line:
-                self.tokens.extend(tokenizer.encode(line))
+
+        self.samples = []
         self.seq_len = seq_len
+        i = 0
+        while i < len(lines) - 1:
+            q_line = lines[i].strip()
+            a_line = lines[i + 1].strip()
+            if q_line.startswith("<q>") and a_line.startswith("<a>"):
+                q_tokens = [t for t in tokenizer.tokenize(q_line) if t not in ("<q>", "<a>")]
+                a_tokens = [t for t in tokenizer.tokenize(a_line) if t not in ("<q>", "<a>")]
+
+                input_ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
+                input_ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
+                input_ids.append(tokenizer.a_token_id)
+
+                target_ids = [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in a_tokens]
+                target_ids.append(tokenizer.eos_token_id)
+
+                full = input_ids + target_ids
+                if len(full) <= seq_len + 1:
+                    self.samples.append((input_ids, target_ids))
+                i += 2
+            else:
+                i += 1
+
     def __len__(self):
-        return max(0, len(self.tokens) - self.seq_len)
+        return len(self.samples)
+
     def __getitem__(self, idx):
-        chunk = self.tokens[idx : idx + self.seq_len + 1]
-        return torch.tensor(chunk[:-1], dtype=torch.long), torch.tensor(chunk[1:], dtype=torch.long)
+        input_ids, target_ids = self.samples[idx]
+        full = input_ids + target_ids
+        full = full[:self.seq_len + 1]
+        x = torch.tensor(full[:-1], dtype=torch.long)
+        y = torch.tensor(full[1:], dtype=torch.long)
+        mask = torch.zeros(len(full) - 1, dtype=torch.bool)
+        mask[len(input_ids) - 1:] = True
+        return x, y, mask
 
 
 def main():
@@ -67,8 +93,8 @@ def main():
     start = time.time()
     step = 0
     while step < max_steps:
-        for x, y in loader:
-            logits, loss = model(x, y)
+        for x, y, mask in loader:
+            logits, loss = model(x, y, loss_mask=mask)
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
