@@ -104,7 +104,8 @@ class WordTokenizer(BaseTokenizer):
         words = []
         for i in ids:
             if i in self.id_to_word and i not in (
-                self.bos_token_id, self.eos_token_id, self.pad_token_id
+                self.bos_token_id, self.eos_token_id, self.pad_token_id,
+                self.q_token_id, self.a_token_id
             ):
                 words.append(self.id_to_word[i])
         return " ".join(words)
