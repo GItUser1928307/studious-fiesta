@@ -1,6 +1,5 @@
 import json
 import os
-import psutil
 from dataclasses import dataclass, asdict
 
 
@@ -78,10 +77,10 @@ def auto_config():
 
 def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     from tokenizer import WordTokenizer
+    from system import get_ram_gb
     tok = WordTokenizer.build(data_file)
     vocab_size = tok.vocab_size
-    ram_gb = psutil.virtual_memory().total / (1024**3)
-    cpu_threads = os.cpu_count() or 2
+    ram_gb = get_ram_gb()
     if ram_gb < 4:
         hidden, layers, heads = 96, 2, 4
     elif ram_gb < 8:
