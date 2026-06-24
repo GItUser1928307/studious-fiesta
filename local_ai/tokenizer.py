@@ -72,7 +72,7 @@ class WordTokenizer(BaseTokenizer):
                 words = cls.tokenize(line)
                 counter.update(words)
 
-        filtered = {w for w, c in counter.items() if c >= min_count}
+        filtered = {w for w, c in counter.items() if c >= min_count and w not in cls.SPECIAL_TOKENS}
 
         word_to_id = {}
         for i, tok in enumerate(cls.SPECIAL_TOKENS):
