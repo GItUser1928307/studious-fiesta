@@ -6,7 +6,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from model import create_model
-from tokenizer import GPT2Tokenizer, CharTokenizer
+from tokenizer import WordTokenizer, CharTokenizer, GPT2Tokenizer
 from train import train, train_quick, train_full
 from generate import generate_text, interactive, load_model_and_tokenizer
 from config import ModelConfig, SMALL_CONFIG
@@ -39,7 +39,7 @@ def main():
         print("\nExamples:")
         print("  python main.py quick")
         print("  python main.py generate --prompt \"Once upon a time\"")
-        print("  python main.py chat --model quick_ckpt/best.pt --char")
+        print("  python main.py chat")
         print("  python main.py info")
         return
 
@@ -79,20 +79,13 @@ def main():
             print(f"Output: {out}\n")
 
     elif cmd == "generate":
-        model_path = "quick_ckpt/final.pt"
-        use_char = True
-        prompt = "Once upon a time"
+        model_path = "quick_ckpt/best.pt"
+        prompt = "hello how are you"
         i = 1
         while i < len(args):
             if args[i] == "--model" and i + 1 < len(args):
                 model_path = args[i + 1]
                 i += 2
-            elif args[i] == "--char":
-                use_char = True
-                i += 1
-            elif args[i] == "--gpt2":
-                use_char = False
-                i += 1
             elif args[i] == "--prompt" and i + 1 < len(args):
                 prompt = args[i + 1]
                 i += 2
@@ -101,31 +94,24 @@ def main():
         if not os.path.exists(model_path):
             print(f"Error: model not found at {model_path}")
             return
-        model, tokenizer = load_model_and_tokenizer(model_path, use_char, device)
+        model, tokenizer = load_model_and_tokenizer(model_path, device=device)
         out = generate_text(model, tokenizer, prompt, max_new=100, device=device)
         print(f"Prompt: {prompt!r}")
         print(f"Output: {out}")
 
     elif cmd == "chat":
         model_path = "quick_ckpt/best.pt"
-        use_char = True
         i = 1
         while i < len(args):
             if args[i] == "--model" and i + 1 < len(args):
                 model_path = args[i + 1]
                 i += 2
-            elif args[i] == "--char":
-                use_char = True
-                i += 1
-            elif args[i] == "--gpt2":
-                use_char = False
-                i += 1
             else:
                 i += 1
         if not os.path.exists(model_path):
-            print(f"Model not found at {model_path}. Run 'python main.py quick' first.")
+            print(f"Model not found at {model_path}. Run 'python retrain.py' first.")
             return
-        model, tokenizer = load_model_and_tokenizer(model_path, use_char, device)
+        model, tokenizer = load_model_and_tokenizer(model_path, device=device)
         interactive(model, tokenizer, device)
 
 

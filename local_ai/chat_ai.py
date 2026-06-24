@@ -6,18 +6,27 @@ import torch
 
 from system import print_system_info, get_cpu_threads
 from model import create_model
-from tokenizer import CharTokenizer
-from config import auto_config
+from tokenizer import WordTokenizer, CharTokenizer
+from config import auto_config_from_data
 
 info = print_system_info()
 torch.set_num_threads(info["threads"])
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CKPT_PATH = os.path.join(os.path.dirname(SCRIPT_DIR), "quick_ckpt", "best.pt")
+PARENT_DIR = os.path.dirname(SCRIPT_DIR)
+CKPT_PATH = os.path.join(PARENT_DIR, "quick_ckpt", "best.pt")
+TOKENIZER_PATH = os.path.join(PARENT_DIR, "quick_ckpt", "tokenizer.json")
+DATA_FILE = os.path.join(PARENT_DIR, "quick_train_data.txt")
 
-config = auto_config()
+if os.path.exists(TOKENIZER_PATH):
+    tokenizer = WordTokenizer.load(TOKENIZER_PATH)
+    config = auto_config_from_data(DATA_FILE)
+else:
+    tokenizer = CharTokenizer()
+    from config import auto_config
+    config = auto_config()
+
 model = create_model(config)
-tokenizer = CharTokenizer()
 
 if os.path.exists(CKPT_PATH):
     ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
@@ -30,6 +39,7 @@ model.eval()
 
 params = model.count_params()
 print(f"\nModel: {params:,} params ({params/1e6:.2f}M)")
+print(f"Tokenizer: {tokenizer.vocab_size} vocab")
 print("\n" + "="*60)
 print("  AI READY - Type prompts below. 'quit' to exit.")
 print("="*60)

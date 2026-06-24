@@ -1,6 +1,7 @@
+import os
 import torch
 from model import create_model
-from tokenizer import GPT2Tokenizer, CharTokenizer
+from tokenizer import WordTokenizer, CharTokenizer, GPT2Tokenizer
 from config import ModelConfig
 
 
@@ -16,7 +17,14 @@ def load_model_and_tokenizer(model_path: str, use_char: bool = False, device: st
     model.load_state_dict(checkpoint["model"])
     model.to(device)
     model.eval()
-    tokenizer = CharTokenizer() if use_char else GPT2Tokenizer()
+
+    tokenizer_path = os.path.join(os.path.dirname(model_path), "tokenizer.json")
+    if os.path.exists(tokenizer_path):
+        tokenizer = WordTokenizer.load(tokenizer_path)
+    elif use_char:
+        tokenizer = CharTokenizer()
+    else:
+        tokenizer = GPT2Tokenizer()
     return model, tokenizer
 
 

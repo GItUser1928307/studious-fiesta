@@ -1,5 +1,7 @@
 """Tokenizers for text encoding/decoding."""
 import torch
+import re
+from collections import Counter
 
 
 class BaseTokenizer:
@@ -41,6 +43,76 @@ class BaseTokenizer:
             "eos": self.eos_token_id,
             "pad": self.pad_token_id,
         }
+
+
+class WordTokenizer(BaseTokenizer):
+    """Word-level tokenizer. Splits on whitespace, builds vocab from data."""
+
+    SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>"]
+
+    def __init__(self, word_to_id: dict):
+        self.word_to_id = word_to_id
+        self.id_to_word = {v: k for k, v in word_to_id.items()}
+        self.vocab_size = len(word_to_id)
+        self.bos_token_id = self.word_to_id["<bos>"]
+        self.eos_token_id = self.word_to_id["<eos>"]
+        self.pad_token_id = self.word_to_id["<pad>"]
+        self.unk_token_id = self.word_to_id["<unk>"]
+
+    @classmethod
+    def build(cls, data_file: str, min_count: int = 1) -> "WordTokenizer":
+        counter = Counter()
+        with open(data_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                words = line.lower().split()
+                counter.update(words)
+
+        filtered = {w for w, c in counter.items() if c >= min_count}
+
+        word_to_id = {}
+        for i, tok in enumerate(cls.SPECIAL_TOKENS):
+            word_to_id[tok] = i
+        for i, word in enumerate(sorted(filtered)):
+            word_to_id[word] = i + len(cls.SPECIAL_TOKENS)
+
+        return cls(word_to_id)
+
+    def encode(self, text: str) -> list[int]:
+        ids = [self.bos_token_id]
+        for word in text.lower().split():
+            ids.append(self.word_to_id.get(word, self.unk_token_id))
+        ids.append(self.eos_token_id)
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        words = []
+        for i in ids:
+            if i in self.id_to_word and i not in (
+                self.bos_token_id, self.eos_token_id, self.pad_token_id
+            ):
+                words.append(self.id_to_word[i])
+        return " ".join(words)
+
+    def vocab_info(self) -> str:
+        lines = [f"Vocab size: {self.vocab_size}"]
+        lines.append(f"  Special: {self.SPECIAL_TOKENS}")
+        lines.append(f"  Words: {self.vocab_size - len(self.SPECIAL_TOKENS)}")
+        return "\n".join(lines)
+
+    def save(self, path: str):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.word_to_id, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "WordTokenizer":
+        import json
+        with open(path, encoding="utf-8") as f:
+            word_to_id = json.load(f)
+        return cls(word_to_id)
 
 
 class CharTokenizer(BaseTokenizer):

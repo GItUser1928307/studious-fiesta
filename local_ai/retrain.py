@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from model import create_model
-from tokenizer import CharTokenizer
-from config import auto_config, auto_train_config
+from tokenizer import WordTokenizer
+from config import auto_config_from_data, auto_train_config
 from system import print_system_info, get_cpu_threads
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -20,8 +20,12 @@ CKPT_DIR = os.path.join(PARENT_DIR, "quick_ckpt")
 class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer, seq_len):
         with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-        self.tokens = tokenizer.encode(text)
+            lines = f.readlines()
+        self.tokens = []
+        for line in lines:
+            line = line.strip()
+            if line:
+                self.tokens.extend(tokenizer.encode(line))
         self.seq_len = seq_len
     def __len__(self):
         return max(0, len(self.tokens) - self.seq_len)
@@ -34,12 +38,15 @@ def main():
     info = print_system_info()
     torch.set_num_threads(info["threads"])
 
-    model_config = auto_config()
+    tokenizer = WordTokenizer.build(DATA_FILE)
+    print(f"Tokenizer: {tokenizer.vocab_size} words", flush=True)
+    print(tokenizer.vocab_info(), flush=True)
+
+    model_config = auto_config_from_data(DATA_FILE)
     train_config = auto_train_config(DATA_FILE, CKPT_DIR)
-    tokenizer = CharTokenizer()
     model = create_model(model_config)
     print(f"Params: {model.count_params():,}", flush=True)
-    print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}", flush=True)
+    print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
     loader = DataLoader(dataset, batch_size=train_config.batch_size, shuffle=True, num_workers=0)
@@ -63,6 +70,7 @@ def main():
 
     save_path = os.path.join(CKPT_DIR, "best.pt")
     torch.save({"model": model.state_dict(), "config": model_config}, save_path)
+    tokenizer.save(os.path.join(CKPT_DIR, "tokenizer.json"))
     print(f"\nDone! {time.time()-start:.1f}s | Final loss: {loss.item():.4f}", flush=True)
     print(f"Saved to {save_path}", flush=True)
 
