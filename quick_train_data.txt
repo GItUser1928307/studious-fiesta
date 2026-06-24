@@ -1,0 +1,10 @@
+Hello! How are you?
+I am good, thank you!
+Hey! What is up?
+Not much, just chatting.
+How is your day?
+My day is great!
+Goodbye!
+Goodbye! Take care!
+See you later!
+See you! Have a good day!
