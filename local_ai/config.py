@@ -78,12 +78,20 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     from tokenizer import WordTokenizer
     tok = WordTokenizer.build(data_file)
     vocab_size = tok.vocab_size
+    ram_gb = psutil.virtual_memory().total / (1024**3)
+    cpu_threads = os.cpu_count() or 2
+    if ram_gb < 4:
+        hidden, layers, heads = 96, 2, 4
+    elif ram_gb < 8:
+        hidden, layers, heads = 128, 3, 4
+    else:
+        hidden, layers, heads = 192, 4, 8
     return ModelConfig(
         vocab_size=vocab_size,
-        hidden_size=256,
-        num_layers=6,
-        num_heads=8,
-        intermediate_size=512,
+        hidden_size=hidden,
+        num_layers=layers,
+        num_heads=heads,
+        intermediate_size=hidden * 2,
         max_seq_len=max_seq_len,
     )
 
