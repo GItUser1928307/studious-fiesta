@@ -149,7 +149,7 @@ class WordTokenizer(BaseTokenizer):
                 parts = WordTokenizer.CONTRACTIONS[lower].split()
                 tokens.extend(parts)
             else:
-                parts = re.findall(r"\w+|[^\w\s]", lower)
+                parts = re.findall(r"\w+[^\w\s]*|\S", lower)
                 tokens.extend(parts)
         return tokens
 
