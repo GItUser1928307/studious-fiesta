@@ -82,17 +82,17 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     vocab_size = tok.vocab_size
     ram_gb = get_ram_gb()
     if ram_gb < 4:
-        hidden, layers, heads = 96, 2, 4
+        hidden, layers, heads, inter = 128, 4, 4, 267
     elif ram_gb < 8:
-        hidden, layers, heads = 128, 3, 4
+        hidden, layers, heads, inter = 128, 4, 4, 267
     else:
-        hidden, layers, heads = 192, 4, 8
+        hidden, layers, heads, inter = 128, 4, 4, 267
     return ModelConfig(
         vocab_size=vocab_size,
         hidden_size=hidden,
         num_layers=layers,
         num_heads=heads,
-        intermediate_size=hidden * 2,
+        intermediate_size=inter,
         max_seq_len=max_seq_len,
     )
 

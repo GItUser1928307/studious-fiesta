@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Train the model - auto-detects hardware."""
-import sys, os, time
+import sys, os, time, math
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch
@@ -89,6 +89,13 @@ def main():
     print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
+    warmup_steps = min(100, train_config.max_steps // 10)
+    def lr_lambda(step):
+        if step < warmup_steps:
+            return step / max(1, warmup_steps)
+        progress = (step - warmup_steps) / max(1, train_config.max_steps - warmup_steps)
+        return 0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     os.makedirs(CKPT_DIR, exist_ok=True)
     model.train()
 
@@ -102,6 +109,7 @@ def main():
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
+            scheduler.step()
             step += 1
             if step % train_config.log_interval == 0:
                 print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
