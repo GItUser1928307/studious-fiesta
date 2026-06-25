@@ -90,7 +90,7 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     elif ram_gb < 128:
         hidden, layers, heads, inter = 384, 8, 8, 1076
     else:
-        hidden, layers, heads, inter = 768, 12, 12, 1920
+        hidden, layers, heads, inter = 1024, 24, 16, 4032
     return ModelConfig(
         vocab_size=vocab_size,
         hidden_size=hidden,
