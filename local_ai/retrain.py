@@ -80,9 +80,11 @@ def main():
 
     model_config = auto_config_from_data(DATA_FILE)
     train_config = auto_train_config(DATA_FILE, CKPT_DIR)
-    model = create_model(model_config)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = create_model(model_config).to(device)
     print(f"Params: {model.count_params():,}", flush=True)
     print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}", flush=True)
+    print(f"Device: {device}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
     loader = DataLoader(dataset, batch_size=train_config.batch_size, shuffle=True, num_workers=0)
@@ -104,6 +106,7 @@ def main():
     step = 0
     while step < max_steps:
         for x, y, mask in loader:
+            x, y, mask = x.to(device), y.to(device), mask.to(device)
             logits, loss = model(x, y, loss_mask=mask)
             optimizer.zero_grad()
             loss.backward()

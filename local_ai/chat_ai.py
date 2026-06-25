@@ -40,9 +40,12 @@ if os.path.exists(CKPT_PATH):
 else:
     print("No trained weights found - using random init")
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
 model.eval()
 
 params = model.count_params()
+print(f"Device: {device.upper()}")
 print(f"\nModel: {params:,} params ({params/1e6:.2f}M)")
 print(f"Tokenizer: {tokenizer.vocab_size} vocab")
 print("\n" + "="*60)
@@ -70,7 +73,7 @@ while True:
         ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
         ids.append(tokenizer.a_token_id)
 
-        idx = torch.tensor([ids]).long()
+        idx = torch.tensor([ids]).long().to(device)
 
         print("Thinking...", end=" ", flush=True)
         with torch.no_grad():
