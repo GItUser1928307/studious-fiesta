@@ -120,7 +120,7 @@ class CustomTransformer(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, eos_token_id: int = None, repetition_penalty: float = 1.3):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, eos_token_id: int = None, repetition_penalty: float = 1.1):
         self.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.config.max_seq_len:]
