@@ -114,18 +114,27 @@ class CustomTransformer(nn.Module):
                 logits_flat = logits.view(-1, logits.size(-1))
                 targets_flat = targets.view(-1)
                 mask_flat = loss_mask.view(-1).bool()
-                loss = F.cross_entropy(logits_flat[mask_flat], targets_flat[mask_flat])
+                loss = F.cross_entropy(logits_flat[mask_flat], targets_flat[mask_flat], label_smoothing=0.1)
             else:
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), label_smoothing=0.1)
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, eos_token_id: int = None):
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95, eos_token_id: int = None, repetition_penalty: float = 1.3):
         self.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx[:, -self.config.max_seq_len:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
+
+            if repetition_penalty != 1.0:
+                prev_tokens = idx[0].tolist()
+                seen = set(prev_tokens)
+                for token_id in seen:
+                    if logits[0, token_id] > 0:
+                        logits[0, token_id] /= repetition_penalty
+                    else:
+                        logits[0, token_id] *= repetition_penalty
 
             if top_k is not None and top_k > 0:
                 values, _ = torch.topk(logits, min(top_k, logits.size(-1)))
@@ -134,7 +143,9 @@ class CustomTransformer(nn.Module):
             if top_p is not None and top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
                 cum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-                sorted_mask = cum_probs - F.softmax(sorted_logits, dim=-1) > top_p
+                sorted_mask = cum_probs > top_p
+                sorted_mask[:, 1:] = sorted_mask[:, :-1].clone()
+                sorted_mask[:, 0] = False
                 sorted_logits[sorted_mask] = float("-inf")
                 logits = sorted_logits.gather(1, sorted_indices.argsort(-1))
 
