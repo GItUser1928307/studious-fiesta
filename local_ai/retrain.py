@@ -87,7 +87,12 @@ def main():
     print(f"Device: {device}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
-    loader = DataLoader(dataset, batch_size=train_config.batch_size, shuffle=True, num_workers=0)
+    if len(dataset) == 0:
+        print("ERROR: No valid <q>/<a> pairs found in dataset!", flush=True)
+        print("Make sure data alternates: <q> question then <a> answer", flush=True)
+        return
+    batch_size = min(train_config.batch_size, len(dataset))
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
