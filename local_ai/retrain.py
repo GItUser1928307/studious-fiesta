@@ -161,12 +161,13 @@ def main():
             with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
                 logits, loss = model(x, y, loss_mask=mask)
                 loss = loss.mean()
+            optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
-            scheduler.zero_grad()
+            scheduler.step()
             scheduler.step()
             step += 1
             if is_main and step % train_config.log_interval == 0:
