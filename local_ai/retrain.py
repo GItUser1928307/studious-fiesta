@@ -89,7 +89,14 @@ def main():
         print(f"GPUs detected: {num_gpus}", flush=True)
         for i in range(num_gpus):
             print(f"  GPU {i}: {torch.cuda.get_device_name(i)}", flush=True)
-        print(f"DDP world_size: {world_size}", flush=True)
+        if use_ddp:
+            print(f"Using DDP across {world_size} GPUs", flush=True)
+        elif num_gpus >= 2:
+            print(f"Using DataParallel across {num_gpus} GPUs", flush=True)
+        elif num_gpus == 1:
+            print(f"Using single GPU: {torch.cuda.get_device_name(0)}", flush=True)
+        else:
+            print("No GPU detected, using CPU", flush=True)
 
     tokenizer_name = "word"
     tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
@@ -104,11 +111,8 @@ def main():
 
     if use_ddp:
         model = DDP(model, device_ids=[local_rank])
-        if is_main:
-            print(f"Using DDP across {world_size} GPUs", flush=True)
-    else:
-        if torch.cuda.is_available():
-            print(f"Using single GPU: {torch.cuda.get_device_name(0)}", flush=True)
+    elif not use_ddp and torch.cuda.device_count() >= 2:
+        model = nn.DataParallel(model)
 
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
