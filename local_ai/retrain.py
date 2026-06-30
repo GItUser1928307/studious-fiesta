@@ -126,6 +126,7 @@ def main():
         for x, y, mask in loader:
             x, y, mask = x.to(device), y.to(device), mask.to(device)
             logits, loss = model(x, y, loss_mask=mask)
+            loss = loss.mean()
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
