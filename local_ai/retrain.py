@@ -81,10 +81,23 @@ def main():
     model_config = auto_config_from_data(DATA_FILE)
     train_config = auto_train_config(DATA_FILE, CKPT_DIR)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"GPUs detected: {num_gpus}", flush=True)
+    if num_gpus >= 2:
+        for i in range(num_gpus):
+            print(f"  GPU {i}: {torch.cuda.get_device_name(i)}", flush=True)
+
     model = create_model(model_config).to(device)
-    print(f"Params: {model.count_params():,}", flush=True)
+    if num_gpus >= 2:
+        model = nn.DataParallel(model)
+        print(f"Using DataParallel across {num_gpus} GPUs", flush=True)
+    elif num_gpus == 1:
+        print(f"Using single GPU: {torch.cuda.get_device_name(0)}", flush=True)
+
+    params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
+    print(f"Params: {params:,}", flush=True)
     print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}", flush=True)
-    print(f"Device: {device}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
     if len(dataset) == 0:
@@ -125,7 +138,8 @@ def main():
                 break
 
     save_path = os.path.join(CKPT_DIR, "best.pt")
-    torch.save({"model": model.state_dict(), "config": model_config, "tokenizer": tokenizer_name}, save_path)
+    state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
+    torch.save({"model": state_dict, "config": model_config, "tokenizer": tokenizer_name}, save_path)
     save_tokenizer(tokenizer, os.path.join(CKPT_DIR, "tokenizer.json"))
     print(f"\nDone! {time.time()-start:.1f}s | Final loss: {loss.item():.4f}", flush=True)
     print(f"Saved to {save_path}", flush=True)

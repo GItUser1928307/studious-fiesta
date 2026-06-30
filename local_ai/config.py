@@ -77,26 +77,14 @@ def auto_config():
 
 def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     from tokenizer import WordTokenizer
-    from system import get_ram_gb
     tok = WordTokenizer.build(data_file)
     vocab_size = tok.vocab_size
-    ram_gb = get_ram_gb()
-    if ram_gb < 4:
-        hidden, layers, heads, inter = 160, 4, 8, 364
-    elif ram_gb < 8:
-        hidden, layers, heads, inter = 160, 4, 8, 364
-    elif ram_gb < 32:
-        hidden, layers, heads, inter = 384, 8, 8, 1076
-    elif ram_gb < 128:
-        hidden, layers, heads, inter = 768, 13, 12, 3072
-    else:
-        hidden, layers, heads, inter = 1024, 24, 16, 4032
     return ModelConfig(
         vocab_size=vocab_size,
-        hidden_size=hidden,
-        num_layers=layers,
-        num_heads=heads,
-        intermediate_size=inter,
+        hidden_size=768,
+        num_layers=13,
+        num_heads=12,
+        intermediate_size=3072,
         max_seq_len=max_seq_len,
     )
 
