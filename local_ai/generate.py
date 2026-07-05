@@ -50,7 +50,7 @@ def generate_text(model, tokenizer, prompt: str, max_new: int = 100, temperature
     input_ids.append(tokenizer.a_token_id)
 
     idx = torch.tensor([input_ids], dtype=torch.long).to(device)
-    output = model.generate(idx, max_new, temperature=0.3, top_k=20, top_p=0.8, eos_token_id=tokenizer.eos_token_id)
+    output = model.generate(idx, max_new, temperature=temperature, top_k=top_k, top_p=top_p, eos_token_id=tokenizer.eos_token_id)
     generated = output[0].tolist()
     new_tokens = generated[len(input_ids):]
     raw = tokenizer.decode(new_tokens)

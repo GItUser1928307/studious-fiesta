@@ -69,9 +69,9 @@ def ask_ai(model, tokenizer, device, prompt, context=""):
         out = model.generate(
             idx,
             max_new_tokens=80,
-            temperature=0.3,
-            top_k=20,
-            top_p=0.8,
+            temperature=0.7,
+            top_k=40,
+            top_p=0.9,
             eos_token_id=tokenizer.eos_token_id,
         )
 
