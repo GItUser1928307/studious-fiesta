@@ -39,7 +39,14 @@ class TextDataset(Dataset):
                 target_ids.append(tokenizer.eos_token_id)
                 full = input_ids + target_ids
                 if len(full) <= seq_len + 1:
-                    self.samples.append((input_ids, target_ids))
+                    x = torch.zeros(seq_len, dtype=torch.long)
+                    y = torch.zeros(seq_len, dtype=torch.long)
+                    mask = torch.zeros(seq_len, dtype=torch.bool)
+                    n = len(full) - 1
+                    x[:n] = torch.tensor(full[:-1], dtype=torch.long)
+                    y[:n] = torch.tensor(full[1:], dtype=torch.long)
+                    mask[len(input_ids) - 1: n] = True
+                    self.samples.append((x, y, mask))
                 i += 2
             else:
                 i += 1
@@ -48,17 +55,7 @@ class TextDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        input_ids, target_ids = self.samples[idx]
-        full = input_ids + target_ids
-        full = full[:self.seq_len + 1]
-        x = torch.zeros(self.seq_len, dtype=torch.long)
-        y = torch.zeros(self.seq_len, dtype=torch.long)
-        mask = torch.zeros(self.seq_len, dtype=torch.bool)
-        n = len(full) - 1
-        x[:n] = torch.tensor(full[:-1], dtype=torch.long)
-        y[:n] = torch.tensor(full[1:], dtype=torch.long)
-        mask[len(input_ids) - 1: n] = True
-        return x, y, mask
+        return self.samples[idx]
 
 
 def auto_launch():
@@ -123,7 +120,7 @@ def main():
     model = create_model(model_config).to(device)
 
     if use_ddp:
-        model = DDP(model, device_ids=[local_rank])
+        model = DDP(model, device_ids=[local_rank], gradient_as_bucket_view=True, static_graph=True)
 
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
@@ -191,7 +188,7 @@ def main():
             sampler.set_epoch(step)
         for x, y, mask in loader:
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_amp):
                 logits, loss = model(x, y, loss_mask=mask)
                 loss = loss.mean()
