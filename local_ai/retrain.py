@@ -164,8 +164,23 @@ def main():
     model.train()
 
     max_steps = train_config.max_steps
+    start_step = 0
     start = time.time()
-    step = 0
+
+    resume_path = os.path.join(CKPT_DIR, "latest.pt")
+    if "--resume" in sys.argv and os.path.exists(resume_path):
+        ckpt = torch.load(resume_path, map_location=device, weights_only=False)
+        model_to_load = model.module if hasattr(model, 'module') else model
+        model_to_load.load_state_dict(ckpt["model"])
+        start_step = ckpt["step"]
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        if "scaler" in ckpt and use_amp:
+            scaler.load_state_dict(ckpt["scaler"])
+        if is_main:
+            print(f"Resumed from step {start_step}", flush=True)
+
+    step = start_step
     while step < max_steps:
         if sampler is not None:
             sampler.set_epoch(step)
@@ -184,6 +199,18 @@ def main():
             step += 1
             if is_main and step % train_config.log_interval == 0:
                 print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
+            if is_main and step % train_config.save_interval == 0:
+                state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
+                torch.save({
+                    "model": state_dict,
+                    "config": model_config,
+                    "tokenizer": tokenizer_name,
+                    "step": step,
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "scaler": scaler.state_dict(),
+                }, os.path.join(CKPT_DIR, "latest.pt"))
+                print(f"  Saved checkpoint at step {step}", flush=True)
             if step >= max_steps:
                 break
 
