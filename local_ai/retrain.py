@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Train the model — DDP + FP16 + multi-worker DataLoader."""
-import sys, os, time, math
+"""Train the model — auto-launches DDP when multiple GPUs detected."""
+import sys, os, time, math, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch
@@ -23,7 +23,6 @@ class TextDataset(Dataset):
     def __init__(self, file_path, tokenizer, seq_len):
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-
         self.samples = []
         self.seq_len = seq_len
         i = 0
@@ -33,14 +32,11 @@ class TextDataset(Dataset):
             if q_line.startswith("<q>") and a_line.startswith("<a>"):
                 q_tokens = [t for t in tokenizer.tokenize(q_line) if t not in ("<q>", "<a>")]
                 a_tokens = [t for t in tokenizer.tokenize(a_line) if t not in ("<q>", "<a>")]
-
                 input_ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
                 input_ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
                 input_ids.append(tokenizer.a_token_id)
-
                 target_ids = [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in a_tokens]
                 target_ids.append(tokenizer.eos_token_id)
-
                 full = input_ids + target_ids
                 if len(full) <= seq_len + 1:
                     self.samples.append((input_ids, target_ids))
@@ -63,6 +59,21 @@ class TextDataset(Dataset):
         y[:n] = torch.tensor(full[1:], dtype=torch.long)
         mask[len(input_ids) - 1: n] = True
         return x, y, mask
+
+
+def auto_launch():
+    """If called via plain `python retrain.py` and 2+ GPUs exist, re-launch with torchrun."""
+    if "RANK" in os.environ:
+        return
+    num_gpus = torch.cuda.device_count()
+    if num_gpus < 2:
+        return
+    print(f"Detected {num_gpus} GPUs — launching with torchrun for DDP...", flush=True)
+    script = os.path.abspath(__file__)
+    cmd = [sys.executable, "-m", "torch.distributed.run",
+           f"--nproc_per_node={num_gpus}", script] + sys.argv[1:]
+    proc = subprocess.run(cmd, env={**os.environ, "CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(num_gpus))})
+    sys.exit(proc.returncode)
 
 
 def main():
@@ -90,9 +101,7 @@ def main():
         for i in range(num_gpus):
             print(f"  GPU {i}: {torch.cuda.get_device_name(i)}", flush=True)
         if use_ddp:
-            print(f"Using DDP across {world_size} GPUs", flush=True)
-        elif num_gpus >= 2:
-            print(f"Using DataParallel across {num_gpus} GPUs", flush=True)
+            print(f"Using DDP across {world_size} GPUs — each GPU runs its own process", flush=True)
         elif num_gpus == 1:
             print(f"Using single GPU: {torch.cuda.get_device_name(0)}", flush=True)
         else:
@@ -111,13 +120,12 @@ def main():
 
     if use_ddp:
         model = DDP(model, device_ids=[local_rank])
-    elif not use_ddp and torch.cuda.device_count() >= 2:
-        model = nn.DataParallel(model)
 
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
         print(f"Params: {params:,}", flush=True)
         print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}", flush=True)
+        print(f"Device: {device}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
     if len(dataset) == 0:
@@ -136,12 +144,13 @@ def main():
         sampler=sampler,
         num_workers=min(4, os.cpu_count() or 1),
         pin_memory=True,
-        persistent_workers=True,
+        persistent_workers=(os.cpu_count() or 1) > 1,
     )
     if is_main:
-        print(f"Dataset: {len(dataset)} samples, {len(loader)} batches per rank", flush=True)
+        print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
 
-    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
+    use_amp = device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
     warmup_steps = min(100, train_config.max_steps // 10)
@@ -162,16 +171,15 @@ def main():
             sampler.set_epoch(step)
         for x, y, mask in loader:
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
-            with torch.amp.autocast("cuda", enabled=(device.type == "cuda")):
+            optimizer.zero_grad()
+            with torch.amp.autocast("cuda", enabled=use_amp):
                 logits, loss = model(x, y, loss_mask=mask)
                 loss = loss.mean()
-            optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
             scheduler.step()
             step += 1
             if is_main and step % train_config.log_interval == 0:
@@ -192,4 +200,5 @@ def main():
 
 
 if __name__ == "__main__":
+    auto_launch()
     main()
