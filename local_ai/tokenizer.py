@@ -134,11 +134,7 @@ class WordTokenizer(BaseTokenizer):
 
     @staticmethod
     def tokenize(text: str) -> list:
-        # NOTE: everything is lowercased before splitting (except the
-        # <q>/<a> structural tokens). Without this, "How" and "how" -- or
-        # any word that ever starts a sentence -- end up as two separate
-        # vocab entries, which quietly halves the training signal for a
-        # big chunk of the vocabulary on a small dataset.
+        # Case-sensitive: "Hello" and "hello" are different tokens.
         tokens = []
         for word in text.split():
             if word in ("<q>", "<a>"):
@@ -149,7 +145,7 @@ class WordTokenizer(BaseTokenizer):
                 parts = WordTokenizer.CONTRACTIONS[lower].split()
                 tokens.extend(parts)
             else:
-                parts = re.findall(r"\w+[^\w\s]*|\S", lower)
+                parts = re.findall(r"\w+[^\w\s]*|\S", word)
                 tokens.extend(parts)
         return tokens
 
