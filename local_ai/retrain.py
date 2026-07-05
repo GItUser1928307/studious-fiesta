@@ -77,6 +77,10 @@ def auto_launch():
 
 
 def main():
+    os.environ.setdefault("NCCL_IB_DISABLE", "1")
+    os.environ.setdefault("NCCL_NET_GDR_LEVEL", "0")
+    torch.backends.cudnn.benchmark = True
+
     use_ddp = "RANK" in os.environ
     if use_ddp:
         dist.init_process_group("nccl")
@@ -121,6 +125,11 @@ def main():
     if use_ddp:
         model = DDP(model, device_ids=[local_rank])
 
+    if hasattr(torch, "compile"):
+        model = torch.compile(model)
+        if is_main:
+            print("torch.compile enabled", flush=True)
+
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
         print(f"Params: {params:,}", flush=True)
@@ -142,9 +151,10 @@ def main():
         batch_size=batch_size,
         shuffle=(sampler is None),
         sampler=sampler,
-        num_workers=min(4, os.cpu_count() or 1),
+        num_workers=min(8, os.cpu_count() or 1),
         pin_memory=True,
         persistent_workers=(os.cpu_count() or 1) > 1,
+        prefetch_factor=2,
     )
     if is_main:
         print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
