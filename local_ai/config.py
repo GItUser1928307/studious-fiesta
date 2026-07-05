@@ -90,4 +90,4 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 96):
 
 
 def auto_train_config(data_file="quick_train_data.txt", save_dir="quick_ckpt"):
-    return TrainConfig(batch_size=32, max_steps=20000, learning_rate=3e-4, log_interval=5, save_interval=200, data_file=data_file, save_dir=save_dir)
+    return TrainConfig(batch_size=128, max_steps=20000, learning_rate=3e-4, log_interval=5, save_interval=200, data_file=data_file, save_dir=save_dir)
