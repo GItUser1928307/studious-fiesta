@@ -125,11 +125,6 @@ def main():
     if use_ddp:
         model = DDP(model, device_ids=[local_rank])
 
-    if hasattr(torch, "compile"):
-        model = torch.compile(model)
-        if is_main:
-            print("torch.compile enabled", flush=True)
-
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
         print(f"Params: {params:,}", flush=True)
