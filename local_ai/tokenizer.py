@@ -455,12 +455,170 @@ class ImprovedWordTokenizer(BaseTokenizer):
         return cls(word_to_id)
 
 
+class BPETokenizer(BaseTokenizer):
+    """Byte Pair Encoding tokenizer - learns subword merges from data."""
+
+    SPECIAL_TOKENS = ["<pad>", "<bos>", "<eos>", "<unk>", "<q>", "<a>"]
+
+    def __init__(self, token_to_id: dict, merges: list):
+        self.token_to_id = token_to_id
+        self.id_to_token = {v: k for k, v in token_to_id.items()}
+        self.merges = merges  # List of (bytes, merge_token) tuples
+        self.vocab_size = len(token_to_id)
+        self.bos_token_id = self.token_to_id["<bos>"]
+        self.eos_token_id = self.token_to_id["<eos>"]
+        self.pad_token_id = self.token_to_id["<pad>"]
+        self.unk_token_id = self.token_to_id["<unk>"]
+        self.q_token_id = self.token_to_id["<q>"]
+        self.a_token_id = self.token_to_id["<a>"]
+
+    @classmethod
+    def build(cls, data_file: str, num_merges: int = 200) -> "BPETokenizer":
+        """Learn BPE vocabulary from data."""
+        import json
+        
+        # Phase 1: Collect all characters
+        vocab = set()
+        word_freqs = Counter()
+        
+        with open(data_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                words = line.split()
+                for word in words:
+                    word_freqs[word] += 1
+                    for ch in word:
+                        vocab.add(ch)
+        
+        # Initialize token_to_id with special tokens and characters
+        token_to_id = {}
+        for i, tok in enumerate(cls.SPECIAL_TOKENS):
+            token_to_id[tok] = i
+        
+        for ch in sorted(vocab):
+            token_to_id[ch] = len(token_to_id)
+        
+        # Phase 2: Learn merges via BPE
+        merges = []
+        word_splits = {}
+        
+        for word, freq in word_freqs.items():
+            word_splits[word] = list(word) + ["</w>"]
+        
+        for _ in range(min(num_merges, 200)):  # Limit to 200 merges
+            # Count adjacent pairs
+            pair_freq = Counter()
+            for word, freq in word_freqs.items():
+                tokens = word_splits[word]
+                for i in range(len(tokens) - 1):
+                    pair = (tokens[i], tokens[i + 1])
+                    pair_freq[pair] += freq
+            
+            if not pair_freq:
+                break
+            
+            # Find most frequent pair
+            best_pair = max(pair_freq, key=pair_freq.get)
+            best_freq = pair_freq[best_pair]
+            
+            if best_freq < 2:
+                break
+            
+            # Merge best pair in all words
+            new_token = best_pair[0] + best_pair[1]
+            token_to_id[new_token] = len(token_to_id)
+            merges.append((best_pair, new_token))
+            
+            for word in word_splits:
+                tokens = word_splits[word]
+                i = 0
+                new_tokens = []
+                while i < len(tokens):
+                    if i < len(tokens) - 1 and (tokens[i], tokens[i + 1]) == best_pair:
+                        new_tokens.append(new_token)
+                        i += 2
+                    else:
+                        new_tokens.append(tokens[i])
+                        i += 1
+                word_splits[word] = new_tokens
+        
+        return cls(token_to_id, merges)
+
+    def encode(self, text: str) -> list[int]:
+        ids = [self.bos_token_id]
+        
+        # Split into words, then apply learned merges
+        words = text.split()
+        for word in words:
+            tokens = list(word) + ["</w>"]
+            
+            # Apply all learned merges
+            for (a, b), merged in self.merges:
+                i = 0
+                new_tokens = []
+                while i < len(tokens):
+                    if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
+                        new_tokens.append(merged)
+                        i += 2
+                    else:
+                        new_tokens.append(tokens[i])
+                        i += 1
+                tokens = new_tokens
+            
+            # Convert to IDs
+            for token in tokens:
+                ids.append(self.token_to_id.get(token, self.unk_token_id))
+        
+        ids.append(self.eos_token_id)
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        tokens = []
+        for i in ids:
+            if i in self.id_to_token and i not in (
+                self.bos_token_id, self.eos_token_id, self.pad_token_id,
+                self.q_token_id, self.a_token_id
+            ):
+                tokens.append(self.id_to_token[i])
+        
+        # Reconstruct text by removing </w> markers and joining
+        text = "".join(tokens).replace("</w>", " ").strip()
+        return text
+
+    def vocab_info(self) -> str:
+        lines = [f"Vocab size: {self.vocab_size}"]
+        lines.append(f"  Special: {self.SPECIAL_TOKENS}")
+        lines.append(f"  Merges learned: {len(self.merges)}")
+        lines.append(f"  Subword tokens: {self.vocab_size - len(self.SPECIAL_TOKENS)}")
+        return "\n".join(lines)
+
+    def save(self, path: str):
+        import json
+        data = {
+            "token_to_id": self.token_to_id,
+            "merges": [((a, b), m) for (a, b), m in self.merges],
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "BPETokenizer":
+        import json
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        merges = [((a, b), m) for [a, b], m in data["merges"]]
+        return cls(data["token_to_id"], merges)
+
+
 TOKENIZER_REGISTRY = {
     "word": WordTokenizer,
     "whitespace": WhitespaceTokenizer,
     "char": CharTokenizer,
     "gpt2": GPT2Tokenizer,
     "improved": ImprovedWordTokenizer,
+    "bpe": BPETokenizer,
 }
 
 
@@ -468,7 +626,7 @@ def get_tokenizer(name: str, **kwargs):
     if name not in TOKENIZER_REGISTRY:
         raise ValueError(f"Unknown tokenizer: {name}. Available: {list(TOKENIZER_REGISTRY.keys())}")
     cls = TOKENIZER_REGISTRY[name]
-    if name in ("word", "whitespace", "improved"):
+    if name in ("word", "whitespace", "improved", "bpe"):
         return cls.build(kwargs["data_file"])
     return cls()
 
@@ -486,6 +644,8 @@ def save_tokenizer(tokenizer, path: str):
             break
     if type_name in ("word", "whitespace", "improved"):
         data = {"type": type_name, "vocab": tokenizer.word_to_id}
+    elif type_name == "bpe":
+        data = {"type": type_name, "token_to_id": tokenizer.token_to_id, "merges": [((a, b), m) for (a, b), m in tokenizer.merges]}
     else:
         data = {"type": type_name or "char"}
     with open(path, "w", encoding="utf-8") as f:
@@ -499,4 +659,7 @@ def load_tokenizer(path: str, data_file: str = None):
     type_name = data.get("type", "word")
     if type_name in ("word", "whitespace", "improved") and "vocab" in data:
         return TOKENIZER_REGISTRY[type_name](data["vocab"])
+    elif type_name == "bpe" and "token_to_id" in data:
+        merges = [((a, b), m) for [a, b], m in data.get("merges", [])]
+        return BPETokenizer(data["token_to_id"], merges)
     return get_tokenizer(type_name, data_file=data_file)
