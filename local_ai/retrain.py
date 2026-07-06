@@ -108,7 +108,7 @@ def main():
         else:
             print("No GPU detected, using CPU", flush=True)
 
-    tokenizer_name = "word"
+    tokenizer_name = "improved"
     tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
     if is_main:
         print(f"Tokenizer: {tokenizer_name}", flush=True)
