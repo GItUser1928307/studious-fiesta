@@ -462,6 +462,7 @@ class BPETokenizer(BaseTokenizer):
 
     def __init__(self, token_to_id: dict, merges: list):
         self.token_to_id = token_to_id
+        self.word_to_id = token_to_id  # Alias for compatibility with TextDataset
         self.id_to_token = {v: k for k, v in token_to_id.items()}
         self.merges = merges  # List of (bytes, merge_token) tuples
         self.vocab_size = len(token_to_id)
