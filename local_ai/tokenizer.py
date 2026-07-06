@@ -574,6 +574,31 @@ class BPETokenizer(BaseTokenizer):
         ids.append(self.eos_token_id)
         return ids
 
+    def tokenize(self, text: str) -> list[str]:
+        """Tokenize text into subword tokens using learned BPE merges."""
+        tokens = []
+        words = text.split()
+        
+        for word in words:
+            word_tokens = list(word) + ["</w>"]
+            
+            # Apply all learned merges
+            for (a, b), merged in self.merges:
+                i = 0
+                new_tokens = []
+                while i < len(word_tokens):
+                    if i < len(word_tokens) - 1 and word_tokens[i] == a and word_tokens[i + 1] == b:
+                        new_tokens.append(merged)
+                        i += 2
+                    else:
+                        new_tokens.append(word_tokens[i])
+                        i += 1
+                word_tokens = new_tokens
+            
+            tokens.extend(word_tokens)
+        
+        return tokens
+
     def decode(self, ids: list[int]) -> str:
         tokens = []
         for i in ids:
