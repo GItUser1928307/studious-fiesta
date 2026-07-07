@@ -9,6 +9,8 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
+from tqdm.auto import tqdm
+
 from model import create_model
 from tokenizer import get_tokenizer, save_tokenizer
 from config import auto_config_from_data, auto_train_config
@@ -67,9 +69,17 @@ def auto_launch():
         return
     print(f"Detected {num_gpus} GPUs — launching with torchrun for DDP...", flush=True)
     script = os.path.abspath(__file__)
-    cmd = [sys.executable, "-m", "torch.distributed.run",
-           f"--nproc_per_node={num_gpus}", script] + sys.argv[1:]
-    proc = subprocess.run(cmd, env={**os.environ, "CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(num_gpus))})
+    cmd = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        f"--nproc_per_node={num_gpus}",
+        script,
+    ] + sys.argv[1:]
+    proc = subprocess.run(
+        cmd,
+        env={**os.environ, "CUDA_VISIBLE_DEVICES": ",".join(str(i) for i in range(num_gpus))},
+    )
     sys.exit(proc.returncode)
 
 
@@ -130,7 +140,10 @@ def main():
     params = model.module.count_params() if hasattr(model, 'module') else model.count_params()
     if is_main:
         print(f"Params: {params:,}", flush=True)
-        print(f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}", flush=True)
+        print(
+            f"Config: hidden={model_config.hidden_size}, layers={model_config.num_layers}, seq={model_config.max_seq_len}, vocab={model_config.vocab_size}",
+            flush=True,
+        )
         print(f"Device: {device}", flush=True)
 
     dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
@@ -143,16 +156,21 @@ def main():
 
     batch_size = min(train_config.batch_size, len(dataset))
     sampler = DistributedSampler(dataset, shuffle=True) if use_ddp else None
-    loader = DataLoader(
-        dataset,
+
+    num_workers = min(8, os.cpu_count() or 1)
+    loader_kwargs = dict(
+        dataset=dataset,
         batch_size=batch_size,
         shuffle=(sampler is None),
         sampler=sampler,
-        num_workers=min(8, os.cpu_count() or 1),
+        num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=(os.cpu_count() or 1) > 1,
-        prefetch_factor=2,
     )
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = num_workers > 0
+        loader_kwargs["prefetch_factor"] = 2
+
+    loader = DataLoader(**loader_kwargs)
     if is_main:
         print(f"Dataset: {len(dataset)} samples, {len(loader)} batches", flush=True)
 
@@ -161,11 +179,13 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=train_config.learning_rate, weight_decay=0.1)
     warmup_steps = min(100, train_config.max_steps // 10)
+
     def lr_lambda(step):
         if step < warmup_steps:
             return step / max(1, warmup_steps)
         progress = (step - warmup_steps) / max(1, train_config.max_steps - warmup_steps)
         return 0.1 + 0.9 * 0.5 * (1.0 + math.cos(math.pi * progress))
+
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     os.makedirs(CKPT_DIR, exist_ok=True)
     model.train()
@@ -188,6 +208,16 @@ def main():
             print(f"Resumed from step {start_step}", flush=True)
 
     step = start_step
+    pbar = None
+    if is_main:
+        pbar = tqdm(
+            total=max_steps,
+            initial=start_step,
+            dynamic_ncols=True,
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            leave=True,
+        )
+
     while step < max_steps:
         if sampler is not None:
             sampler.set_epoch(step)
@@ -204,22 +234,35 @@ def main():
             scaler.update()
             scheduler.step()
             step += 1
-            if is_main and step % train_config.log_interval == 0:
-                print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
+
+            if pbar is not None:
+                pbar.update(1)
+                pbar.set_postfix(loss=f"{loss.item():.4f}")
+
             if is_main and step % train_config.save_interval == 0:
                 state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
-                torch.save({
-                    "model": state_dict,
-                    "config": model_config,
-                    "tokenizer": tokenizer_name,
-                    "step": step,
-                    "optimizer": optimizer.state_dict(),
-                    "scheduler": scheduler.state_dict(),
-                    "scaler": scaler.state_dict(),
-                }, os.path.join(CKPT_DIR, "latest.pt"))
-                print(f"  Saved checkpoint at step {step}", flush=True)
+                torch.save(
+                    {
+                        "model": state_dict,
+                        "config": model_config,
+                        "tokenizer": tokenizer_name,
+                        "step": step,
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": scheduler.state_dict(),
+                        "scaler": scaler.state_dict(),
+                    },
+                    os.path.join(CKPT_DIR, "latest.pt"),
+                )
+                if pbar is not None:
+                    pbar.write(f"Saved checkpoint at step {step}")
+                else:
+                    print(f"Saved checkpoint at step {step}", flush=True)
+
             if step >= max_steps:
                 break
+
+    if pbar is not None:
+        pbar.close()
 
     if is_main:
         save_path = os.path.join(CKPT_DIR, "best.pt")
