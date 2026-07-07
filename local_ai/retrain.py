@@ -222,6 +222,7 @@ def main():
         if sampler is not None:
             sampler.set_epoch(step)
         for x, y, mask in loader:
+            step_start = time.time()
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=use_amp):
@@ -235,9 +236,16 @@ def main():
             scheduler.step()
             step += 1
 
+            current_lr = optimizer.param_groups[0]["lr"]
+            step_time = time.time() - step_start
+
             if pbar is not None:
                 pbar.update(1)
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
+                pbar.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    lr=f"{current_lr:.2e}",
+                    step_t=f"{step_time:.2f}s",
+                )
 
             if is_main and step % train_config.save_interval == 0:
                 state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
