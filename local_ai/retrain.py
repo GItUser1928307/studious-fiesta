@@ -108,7 +108,12 @@ def main():
         else:
             print("No GPU detected, using CPU", flush=True)
 
-    tokenizer_name = "bpe"
+    # Parse tokenizer from command line, default to "word"
+    tokenizer_name = "word"  # Options: "word", "improved", "whitespace", "char"
+    for i, arg in enumerate(sys.argv[1:]):
+        if arg == "--tokenizer" and i + 1 < len(sys.argv) - 1:
+            tokenizer_name = sys.argv[i + 2]
+            break
     tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
     if is_main:
         print(f"Tokenizer: {tokenizer_name}", flush=True)
