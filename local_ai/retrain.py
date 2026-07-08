@@ -244,7 +244,8 @@ def main():
         elapsed = time.time() - start
         m, s = divmod(int(elapsed), 60)
         h, m = divmod(m, 60)
-        print(f"\n\nDone! {h}:{m:02d}:{s:02d} | Final loss: {loss.item():.4f}", flush=True)
+        final_loss = loss.item() if 'loss' in dir() else 0.0
+        print(f"\n\nDone! {h}:{m:02d}:{s:02d} | Final loss: {final_loss:.4f}", flush=True)
         print(f"Saved to {save_path}", flush=True)
 
     if use_ddp:
