@@ -217,7 +217,7 @@ def main():
                 bar_len = 20
                 filled = int(bar_len * step / max_steps)
                 bar = "█" * filled + "░" * (bar_len - filled)
-                print(f"\r  {bar} {pct:5.1f}% | Step {step}/{max_steps} | Loss {avg_loss:.4f} | {it_per_sec:.1f}it/s | {h}:{m:02d}:{s:02d} elapsed | ETA {rh}:{rm:02d}:{rs:02d}  ", end="", flush=True)
+                print(f"\r  {bar} {pct:5.1f}% | Step {step:.3f}/{max_steps} | Loss {avg_loss:.4f} | {it_per_sec:.1f}it/s | {h}:{m:02d}:{s:02d} elapsed | ETA {rh}:{rm:02d}:{rs:02d}  ", end="", flush=True)
                 step_start = time.time()
                 loss_sum = 0.0
                 loss_count = 0
