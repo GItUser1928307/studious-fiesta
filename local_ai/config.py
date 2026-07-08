@@ -81,10 +81,10 @@ def auto_config_from_data(data_file: str, max_seq_len: int = 96):
     vocab_size = tok.vocab_size
     return ModelConfig(
         vocab_size=vocab_size,
-        hidden_size=384,
-        num_layers=21,
+        hidden_size=512,
+        num_layers=22,
         num_heads=8,
-        intermediate_size=1076,
+        intermediate_size=1408,
         max_seq_len=max_seq_len,
     )
 
