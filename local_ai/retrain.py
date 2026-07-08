@@ -183,6 +183,9 @@ def main():
             print(f"Resumed from step {start_step}", flush=True)
 
     step = start_step
+    loss_sum = 0.0
+    loss_count = 0
+    step_start = time.time()
     while step < max_steps:
         if sampler is not None:
             sampler.set_epoch(step)
@@ -199,8 +202,25 @@ def main():
             scaler.update()
             scheduler.step()
             step += 1
+            loss_sum += loss.item()
+            loss_count += 1
             if is_main and step % train_config.log_interval == 0:
-                print(f"Step {step}/{max_steps} | Loss: {loss.item():.4f} | {time.time()-start:.1f}s", flush=True)
+                elapsed = time.time() - start
+                it_per_sec = loss_count / max(0.001, time.time() - step_start)
+                avg_loss = loss_sum / loss_count
+                pct = step / max_steps * 100
+                remaining = (max_steps - step) / max(0.001, it_per_sec)
+                m, s = divmod(int(elapsed), 60)
+                h, m = divmod(m, 60)
+                rm, rs = divmod(int(remaining), 60)
+                rh, rm = divmod(rm, 60)
+                bar_len = 20
+                filled = int(bar_len * step / max_steps)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                print(f"\r  {bar} {pct:5.1f}% | Step {step}/{max_steps} | Loss {avg_loss:.4f} | {it_per_sec:.1f}it/s | {h}:{m:02d}:{s:02d} elapsed | ETA {rh}:{rm:02d}:{rs:02d}  ", end="", flush=True)
+                step_start = time.time()
+                loss_sum = 0.0
+                loss_count = 0
             if is_main and step % train_config.save_interval == 0:
                 state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
                 torch.save({
@@ -212,7 +232,7 @@ def main():
                     "scheduler": scheduler.state_dict(),
                     "scaler": scaler.state_dict(),
                 }, os.path.join(CKPT_DIR, "latest.pt"))
-                print(f"  Saved checkpoint at step {step}", flush=True)
+                print(f"\n  ✓ Saved checkpoint at step {step}", flush=True)
             if step >= max_steps:
                 break
 
@@ -221,7 +241,10 @@ def main():
         state_dict = model.module.state_dict() if hasattr(model, 'module') else model.state_dict()
         torch.save({"model": state_dict, "config": model_config, "tokenizer": tokenizer_name}, save_path)
         save_tokenizer(tokenizer, os.path.join(CKPT_DIR, "tokenizer.json"))
-        print(f"\nDone! {time.time()-start:.1f}s | Final loss: {loss.item():.4f}", flush=True)
+        elapsed = time.time() - start
+        m, s = divmod(int(elapsed), 60)
+        h, m = divmod(m, 60)
+        print(f"\n\nDone! {h}:{m:02d}:{s:02d} | Final loss: {loss.item():.4f}", flush=True)
         print(f"Saved to {save_path}", flush=True)
 
     if use_ddp:
