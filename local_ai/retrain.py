@@ -232,7 +232,7 @@ def main():
                     "scheduler": scheduler.state_dict(),
                     "scaler": scaler.state_dict(),
                 }, os.path.join(CKPT_DIR, "latest.pt"))
-                print(f"\n  ✓ Saved checkpoint at step {step}", flush=True)
+                pass
             if step >= max_steps:
                 break
 
