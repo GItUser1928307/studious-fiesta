@@ -26,14 +26,56 @@ def load_everything():
     info = print_system_info()
     torch.set_num_threads(info["threads"])
 
-    if os.path.exists(TOKENIZER_PATH):
-        tokenizer = load_tokenizer(TOKENIZER_PATH)
-        config = auto_config_from_data(DATA_FILE)
-    elif os.path.exists(CKPT_PATH):
+    # Prefer checkpoint's own config/tokenizer to avoid vocab mismatch
+    # (old word 675 vs new BPE 941). Checkpoint is source of truth.
+    if os.path.exists(CKPT_PATH):
         ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
-        tokenizer_name = ckpt.get("tokenizer", "word")
-        tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
-        config = auto_config_from_data(DATA_FILE)
+        # Config from checkpoint (dict or ModelConfig)
+        cfg_data = ckpt.get("config")
+        if cfg_data is not None:
+            if isinstance(cfg_data, dict):
+                from config import ModelConfig
+                config = ModelConfig(**cfg_data)
+            else:
+                config = cfg_data
+        else:
+            config = auto_config_from_data(DATA_FILE)
+        # Tokenizer from saved json preferred (covers BPE)
+        if os.path.exists(TOKENIZER_PATH):
+            try:
+                tokenizer = load_tokenizer(TOKENIZER_PATH)
+                # Verify vocab matches checkpoint
+                if tokenizer.vocab_size != config.vocab_size:
+                    print(f"Warning: tokenizer vocab {tokenizer.vocab_size} != checkpoint {config.vocab_size}, using checkpoint vocab")
+                    # Try to load tokenizer via checkpoint name as fallback
+                    raise ValueError("vocab mismatch")
+            except Exception:
+                # Fallback to checkpoint's tokenizer
+                tokenizer_name = ckpt.get("tokenizer", "word")
+                # For BPE need vocab_size
+                try:
+                    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE, vocab_size=config.vocab_size)
+                except TypeError:
+                    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
+        else:
+            tokenizer_name = ckpt.get("tokenizer", "word")
+            try:
+                tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE, vocab_size=config.vocab_size)
+            except TypeError:
+                tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
+        # Validate
+        assert tokenizer.vocab_size == config.vocab_size, f"vocab mismatch {tokenizer.vocab_size} vs {config.vocab_size}"
+    elif os.path.exists(TOKENIZER_PATH):
+        tokenizer = load_tokenizer(TOKENIZER_PATH)
+        from config import ModelConfig
+        config = ModelConfig(
+            vocab_size=tokenizer.vocab_size,
+            hidden_size=512,
+            num_layers=22,
+            num_heads=8,
+            intermediate_size=1408,
+            max_seq_len=96,
+        )
     else:
         tokenizer = get_tokenizer("word", data_file=DATA_FILE)
         config = auto_config_from_data(DATA_FILE)
@@ -41,9 +83,13 @@ def load_everything():
     model = create_model(config)
 
     if os.path.exists(CKPT_PATH):
-        ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+        # ckpt already loaded above, reuse
+        try:
+            ckpt
+        except NameError:
+            ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
         model.load_state_dict(ckpt["model"])
-        print("Loaded trained weights!")
+        print(f"Loaded trained weights! (vocab {config.vocab_size}, {model.count_params()/1e6:.1f}M)")
     else:
         print("No trained weights found - using random init")
 
@@ -57,10 +103,18 @@ def load_everything():
 def ask_ai(model, tokenizer, device, prompt, context=""):
     full_prompt = f"{context} {prompt}".strip() if context else prompt
 
-    q_tokens = [t for t in tokenizer.tokenize(full_prompt) if t not in ("<q>", "<a>")]
-    ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
-    ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
-    ids.append(tokenizer.a_token_id)
+    # Tokenizer-agnostic: word vs Byte-BPE
+    if hasattr(tokenizer, "word_to_id"):
+        q_tokens = [t for t in tokenizer.tokenize(full_prompt) if t not in ("<q>", "<a>")]
+        ids = [tokenizer.bos_token_id, tokenizer.q_token_id]
+        ids += [tokenizer.word_to_id.get(t, tokenizer.unk_token_id) for t in q_tokens]
+        ids.append(tokenizer.a_token_id)
+    else:
+        # Byte-Level BPE: encode raw text (byte fallback, no UNK)
+        # Strip any <q>/<a> the user may have typed
+        clean = full_prompt.replace("<q>", "").replace("<a>", "").strip()
+        q_ids = tokenizer.encode(clean) if clean else []
+        ids = [tokenizer.bos_token_id, tokenizer.q_token_id] + q_ids + [tokenizer.a_token_id]
 
     idx = torch.tensor([ids]).long().to(device)
 
