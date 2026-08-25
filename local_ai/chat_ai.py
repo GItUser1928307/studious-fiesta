@@ -26,72 +26,66 @@ def load_everything():
     info = print_system_info()
     torch.set_num_threads(info["threads"])
 
-    # Prefer checkpoint's own config/tokenizer to avoid vocab mismatch
-    # (old word 675 vs new BPE 941). Checkpoint is source of truth.
-    if os.path.exists(CKPT_PATH):
-        ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
-        # Config from checkpoint (dict or ModelConfig)
-        cfg_data = ckpt.get("config")
-        if cfg_data is not None:
-            if isinstance(cfg_data, dict):
-                from config import ModelConfig
-                config = ModelConfig(**cfg_data)
-            else:
-                config = cfg_data
-        else:
-            config = auto_config_from_data(DATA_FILE)
-        # Tokenizer from saved json preferred (covers BPE)
-        if os.path.exists(TOKENIZER_PATH):
+    # Normal default tokenizer: Byte-Level BPE 2048 (current pipeline)
+    # Always build from current tokenizer.json or fresh BPE on train split
+    if os.path.exists(TOKENIZER_PATH):
+        try:
+            tokenizer = load_tokenizer(TOKENIZER_PATH)
+            # Prefer bytebpe; if it's old word 675, rebuild as bytebpe
+            if tokenizer.vocab_size == 675 and os.path.exists(DATA_FILE):
+                # Old word checkpoint still on disk — upgrade to default BPE
+                print(f"Found old word tokenizer vocab 675, rebuilding default bytebpe")
+                raise ValueError("upgrade to bytebpe")
+        except Exception:
+            # Build default bytebpe as retrain.py does (train split not needed for chat)
+            from config import ModelConfig
+            # Use current default: bytebpe 2048 (actual ~897 for tiny corpus)
             try:
-                tokenizer = load_tokenizer(TOKENIZER_PATH)
-                # Verify vocab matches checkpoint
-                if tokenizer.vocab_size != config.vocab_size:
-                    print(f"Warning: tokenizer vocab {tokenizer.vocab_size} != checkpoint {config.vocab_size}, using checkpoint vocab")
-                    # Try to load tokenizer via checkpoint name as fallback
-                    raise ValueError("vocab mismatch")
+                tokenizer = get_tokenizer("bytebpe", data_file=DATA_FILE, vocab_size=2048)
             except Exception:
-                # Fallback to checkpoint's tokenizer
-                tokenizer_name = ckpt.get("tokenizer", "word")
-                # For BPE need vocab_size
-                try:
-                    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE, vocab_size=config.vocab_size)
-                except TypeError:
-                    tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
-        else:
-            tokenizer_name = ckpt.get("tokenizer", "word")
-            try:
-                tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE, vocab_size=config.vocab_size)
-            except TypeError:
-                tokenizer = get_tokenizer(tokenizer_name, data_file=DATA_FILE)
-        # Validate
-        assert tokenizer.vocab_size == config.vocab_size, f"vocab mismatch {tokenizer.vocab_size} vs {config.vocab_size}"
-    elif os.path.exists(TOKENIZER_PATH):
-        tokenizer = load_tokenizer(TOKENIZER_PATH)
-        from config import ModelConfig
-        config = ModelConfig(
-            vocab_size=tokenizer.vocab_size,
-            hidden_size=512,
-            num_layers=22,
-            num_heads=8,
-            intermediate_size=1408,
-            max_seq_len=96,
-        )
+                tokenizer = get_tokenizer("word", data_file=DATA_FILE)
     else:
-        tokenizer = get_tokenizer("word", data_file=DATA_FILE)
-        config = auto_config_from_data(DATA_FILE)
+        try:
+            tokenizer = get_tokenizer("bytebpe", data_file=DATA_FILE, vocab_size=2048)
+        except Exception:
+            tokenizer = get_tokenizer("word", data_file=DATA_FILE)
+
+    from config import ModelConfig
+    config = ModelConfig(
+        vocab_size=tokenizer.vocab_size,
+        hidden_size=512,
+        num_layers=22,
+        num_heads=8,
+        intermediate_size=1408,
+        max_seq_len=96,
+    )
 
     model = create_model(config)
 
     if os.path.exists(CKPT_PATH):
-        # ckpt already loaded above, reuse
-        try:
-            ckpt
-        except NameError:
-            ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
-        model.load_state_dict(ckpt["model"])
-        print(f"Loaded trained weights! (vocab {config.vocab_size}, {model.count_params()/1e6:.1f}M)")
+        ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+        ckpt_vocab = ckpt.get("config")
+        if isinstance(ckpt_vocab, dict):
+            ckpt_vocab = ckpt_vocab.get("vocab_size")
+        elif hasattr(ckpt_vocab, "vocab_size"):
+            ckpt_vocab = ckpt_vocab.vocab_size
+        else:
+            ckpt_vocab = None
+        if ckpt_vocab is not None and ckpt_vocab != config.vocab_size:
+            print(
+                f"Checkpoint vocab {ckpt_vocab} != default tokenizer {config.vocab_size} "
+                f"(old word 675 vs new BPE) — not loading old weights. "
+                f"Train a new BPE checkpoint or delete {CKPT_PATH} to use current tokenizer."
+            )
+            print("Using random init with default bytebpe tokenizer")
+        else:
+            try:
+                model.load_state_dict(ckpt["model"])
+                print(f"Loaded trained weights! (vocab {config.vocab_size}, {model.count_params()/1e6:.1f}M)")
+            except Exception as e:
+                print(f"Failed to load checkpoint ({e}) — using random init with default tokenizer")
     else:
-        print("No trained weights found - using random init")
+        print("No trained weights found - using random init with default bytebpe")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
