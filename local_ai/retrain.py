@@ -1001,10 +1001,24 @@ def train_gpu():
     # DataLoader
     # --------------------------------------------------------
 
-    batch_size = min(
-        train_config.batch_size,
-        len(dataset),
-    )
+    # Handle tiny dataset with DDP: ensure each rank has >=1 batch
+    # Original: batch=32 with 29 packed samples split 2 ways -> 0 batches (hang)
+    if use_ddp and world_size > 1:
+        per_rank = len(dataset) // world_size
+        # At least 1 sample per rank, and batch <= per_rank to get a batch
+        batch_size = min(
+            train_config.batch_size,
+            max(1, per_rank),
+            len(dataset),
+        )
+        # For very tiny packed dataset (<2*batch), disable packing effect by clamping to 4
+        if len(dataset) < 32:
+            batch_size = min(batch_size, 4, len(dataset))
+    else:
+        batch_size = min(
+            train_config.batch_size,
+            len(dataset),
+        )
 
     sampler = (
         DistributedSampler(
@@ -1037,13 +1051,15 @@ def train_gpu():
         train_config, "pin_memory", True
     ) and device.type == "cuda"
 
+    # For tiny datasets, don't drop last (would lose 50% data)
+    drop_last_train = len(dataset) >= 64
     loader_kwargs = {
         "batch_size": batch_size,
         "shuffle": sampler is None,
         "sampler": sampler,
         "num_workers": num_workers,
         "pin_memory": use_pin,
-        "drop_last": True,
+        "drop_last": drop_last_train,
     }
 
     if num_workers > 0:
