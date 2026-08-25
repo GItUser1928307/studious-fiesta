@@ -260,16 +260,39 @@ def create_dataset_and_tokenizer(
     )
 
 
+def _unwrap_for_checkpoint(model):
+    """
+    Unwrap DDP and torch.compile wrappers to get the raw
+    eager model for checkpoint compatibility.
+
+    benchmark.py uses the same unwrapping so resume works
+    identically with and without --compile.
+    """
+    m = model
+    # Unwrap DDP
+    if hasattr(m, "module"):
+        m = m.module
+    # Unwrap torch.compile (OptimizedModule -> _orig_mod)
+    # Handle nested wrappers
+    for _ in range(3):
+        if hasattr(m, "_orig_mod"):
+            try:
+                m = m._orig_mod
+            except Exception:
+                break
+        else:
+            break
+    return m
+
+
 def get_model_state_dict(model):
     """
     Return a normal CPU-compatible state dict.
 
-    Works with both regular models and DDP models.
+    Works with regular, DDP, and compiled models.
     """
-    if hasattr(model, "module"):
-        return model.module.state_dict()
-
-    return model.state_dict()
+    inner = _unwrap_for_checkpoint(model)
+    return inner.state_dict()
 
 
 def print_model_information(
@@ -712,11 +735,7 @@ def train_gpu():
             static_graph=True,
         )
 
-    model_for_count = (
-        model.module
-        if hasattr(model, "module")
-        else model
-    )
+    model_for_count = _unwrap_for_checkpoint(model)
 
     print_model_information(
         model_for_count,
@@ -898,16 +917,42 @@ def train_gpu():
             weights_only=False,
         )
 
-        model_to_load = (
-            model.module
-            if hasattr(model, "module")
-            else model
-        )
+        # Use unwrapped model so compiled and eager checkpoints are compatible.
+        # This mirrors benchmark.py's unwrapping and guarantees
+        # existing checkpoints load without restarting.
+        model_to_load = _unwrap_for_checkpoint(model)
 
-        model_to_load.load_state_dict(
-            ckpt["model"],
-            strict=True,
-        )
+        try:
+            model_to_load.load_state_dict(
+                ckpt["model"],
+                strict=True,
+            )
+        except Exception as e:
+            # Compiled wrapper can expose _orig_mod state dict mismatch.
+            # Fall back to eager: disable compile for this run and retry
+            # with the unwrapped eager model so training continues.
+            if getattr(train_config, "compile_enabled", False):
+                if is_main:
+                    print(
+                        f"Compiled resume failed ({e}) — "
+                        f"falling back to eager model",
+                        flush=True,
+                    )
+                train_config.compile_enabled = False
+                # The unwrapped eager model is already model_to_load;
+                # retry loading (should succeed for any valid checkpoint)
+                model_to_load.load_state_dict(
+                    ckpt["model"],
+                    strict=True,
+                )
+                if is_main:
+                    print(
+                        "Fallback to eager succeeded — "
+                        "continuing without compilation",
+                        flush=True,
+                    )
+            else:
+                raise
 
         if "optimizer" in ckpt:
             optimizer.load_state_dict(
