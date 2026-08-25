@@ -688,6 +688,140 @@ class WhitespaceTokenizer(BaseTokenizer):
 
 
 # ============================================================
+# Byte-Level BPE tokenizer (preferred for Meta Spark)
+# ============================================================
+
+class ByteBPETokenizer(BaseTokenizer):
+    """
+    Byte-Level BPE tokenizer for Meta Spark.
+
+    - Trained only on the training split (no leakage)
+    - Byte-level fallback: any Unicode can be represented
+    - No <UNK> needed for ordinary text
+    - Deterministic special tokens: <PAD>, <BOS>, <EOS>, <q>, <a>
+    - Default vocab 2048 for 178-sample / 14KB corpus (per audit)
+      Use 4096 only for larger Kaggle corpus with 46k word vocab
+    """
+
+    SPECIAL_TOKENS = ["<PAD>", "<BOS>", "<EOS>", "<q>", "<a>"]
+    # Also expose lowercase for dataset compatibility
+    # dataset uses <q>, <a> as delimiters
+
+    def __init__(self, tokenizer_path: str = None, hf_tokenizer=None):
+        if hf_tokenizer is not None:
+            self._tok = hf_tokenizer
+        elif tokenizer_path is not None:
+            from tokenizers import Tokenizer
+            self._tok = Tokenizer.from_file(tokenizer_path)
+        else:
+            raise ValueError("ByteBPETokenizer requires tokenizer_path or hf_tokenizer")
+
+        self.vocab_size = self._tok.get_vocab_size()
+        # Map special tokens deterministically
+        vocab = self._tok.get_vocab()
+        # Ensure special tokens exist
+        for tok in self.SPECIAL_TOKENS:
+            if tok not in vocab:
+                raise ValueError(f"ByteBPE vocab missing special token {tok}")
+        self.pad_token_id = vocab["<PAD>"]
+        self.bos_token_id = vocab["<BOS>"]
+        self.eos_token_id = vocab["<EOS>"]
+        self.q_token_id = vocab["<q>"]
+        self.a_token_id = vocab["<a>"]
+        # For compatibility with word tokenizer, expose unk as pad
+        self.unk_token_id = self.pad_token_id
+
+    @classmethod
+    def build(
+        cls,
+        data_file: str,
+        vocab_size: int = 2048,
+        min_frequency: int = 2,
+    ) -> "ByteBPETokenizer":
+        """
+        Train Byte-Level BPE from training split only.
+        Deterministic with fixed seed via tokenizers.
+        """
+        from tokenizers import ByteLevelBPETokenizer as HFByteLevel
+        # Train on the provided file (caller must ensure it's train split only)
+        tok = HFByteLevel()
+        tok.train(
+            files=[data_file],
+            vocab_size=vocab_size,
+            min_frequency=min_frequency,
+            special_tokens=cls.SPECIAL_TOKENS,
+        )
+        return cls(hf_tokenizer=tok)
+
+    @staticmethod
+    def tokenize(text: str) -> list[str]:
+        # For compatibility, return whitespace split (BPE uses encode)
+        return text.split()
+
+    def encode(self, text: str) -> list[int]:
+        # Raw BPE encode without adding BOS/EOS here; dataset adds them
+        return self._tok.encode(text).ids
+
+    def decode(self, ids: list[int]) -> str:
+        # Filter special tokens that are not decodable via byte-level
+        return self._tok.decode(ids, skip_special_tokens=False)
+
+    def vocab_info(self) -> str:
+        return (
+            f"Vocab size: {self.vocab_size}\n"
+            f"  Type: Byte-Level BPE\n"
+            f"  Special: {self.SPECIAL_TOKENS}"
+        )
+
+    def save(self, path: str):
+        # Save HF tokenizer JSON and wrap with type metadata
+        import json as _json
+        import os as _os
+        dir_name = _os.path.dirname(_os.path.abspath(path))
+        _os.makedirs(dir_name, exist_ok=True)
+        # Save HF tokenizer to a temp file then embed
+        hf_path = path + ".hf.json"
+        self._tok.save(hf_path)
+        with open(hf_path, "r", encoding="utf-8") as f:
+            hf_data = _json.load(f)
+        # Wrap with type
+        wrapped = {"type": "bytebpe", "hf": hf_data, "vocab_size": self.vocab_size}
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(wrapped, f, ensure_ascii=False, indent=2)
+        # Cleanup temp
+        try:
+            _os.remove(hf_path)
+        except Exception:
+            pass
+
+    @classmethod
+    def load(cls, path: str) -> "ByteBPETokenizer":
+        import json as _json
+        from tokenizers import Tokenizer
+        with open(path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        # Support wrapped format or raw HF format
+        if "hf" in data:
+            hf_data = data["hf"]
+            # Write temp and load
+            import tempfile, os
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as tf:
+                _json.dump(hf_data, tf)
+                tmp_path = tf.name
+            try:
+                tok = Tokenizer.from_file(tmp_path)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            return cls(hf_tokenizer=tok)
+        else:
+            # Raw HF file
+            return cls(tokenizer_path=path)
+
+
+# ============================================================
 # Registry
 # ============================================================
 
@@ -696,6 +830,8 @@ TOKENIZER_REGISTRY = {
     "whitespace": WhitespaceTokenizer,
     "char": CharTokenizer,
     "gpt2": GPT2Tokenizer,
+    "bytebpe": ByteBPETokenizer,
+    "bpe": ByteBPETokenizer,
 }
 
 
@@ -727,6 +863,8 @@ def get_tokenizer(
     if name in (
         "word",
         "whitespace",
+        "bytebpe",
+        "bpe",
     ):
         data_file = kwargs.get(
             "data_file"
@@ -738,6 +876,13 @@ def get_tokenizer(
                 "data_file=..."
             )
 
+        vocab_size = kwargs.get("vocab_size", 2048)
+        # For bytebpe, allow vocab_size override
+        if name in ("bytebpe", "bpe"):
+            return cls.build(
+                data_file,
+                vocab_size=vocab_size,
+            )
         return cls.build(
             data_file
         )
@@ -837,6 +982,11 @@ def save_tokenizer(
             "type": type_name,
             "vocab": tokenizer.word_to_id,
         }
+
+    elif type_name in ("bytebpe", "bpe"):
+        # Delegates to tokenizer's own save (wraps HF JSON)
+        tokenizer.save(path)
+        return
 
     elif type_name == "char":
         data = {
@@ -945,6 +1095,11 @@ def load_tokenizer(
     # GPT-2 tokenizer has a deterministic external vocabulary.
     if type_name == "gpt2":
         return cls()
+
+    # Byte-Level BPE tokenizer
+    if type_name in ("bytebpe", "bpe"):
+        # Use the class's own load which handles HF wrapping
+        return cls.load(path)
 
     raise ValueError(
         f"Unable to load tokenizer type: {type_name}"

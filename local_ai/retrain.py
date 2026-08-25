@@ -78,46 +78,64 @@ class TextDataset(Dataset):
                 and a_line.startswith("<a>")
             ):
 
-                q_tokens = [
-                    token
-                    for token in tokenizer.tokenize(q_line)
-                    if token not in ("<q>", "<a>")
-                ]
+                # Word-level vs Byte-Level BPE handling
+                if hasattr(tokenizer, "word_to_id"):
+                    q_tokens = [
+                        token
+                        for token in tokenizer.tokenize(q_line)
+                        if token not in ("<q>", "<a>")
+                    ]
 
-                a_tokens = [
-                    token
-                    for token in tokenizer.tokenize(a_line)
-                    if token not in ("<q>", "<a>")
-                ]
+                    a_tokens = [
+                        token
+                        for token in tokenizer.tokenize(a_line)
+                        if token not in ("<q>", "<a>")
+                    ]
 
-                input_ids = [
-                    tokenizer.bos_token_id,
-                    tokenizer.q_token_id,
-                ]
+                    input_ids = [
+                        tokenizer.bos_token_id,
+                        tokenizer.q_token_id,
+                    ]
 
-                input_ids += [
-                    tokenizer.word_to_id.get(
-                        token,
-                        tokenizer.unk_token_id,
+                    input_ids += [
+                        tokenizer.word_to_id.get(
+                            token,
+                            tokenizer.unk_token_id,
+                        )
+                        for token in q_tokens
+                    ]
+
+                    input_ids.append(
+                        tokenizer.a_token_id
                     )
-                    for token in q_tokens
-                ]
 
-                input_ids.append(
-                    tokenizer.a_token_id
-                )
+                    target_ids = [
+                        tokenizer.word_to_id.get(
+                            token,
+                            tokenizer.unk_token_id,
+                        )
+                        for token in a_tokens
+                    ]
 
-                target_ids = [
-                    tokenizer.word_to_id.get(
-                        token,
-                        tokenizer.unk_token_id,
+                    target_ids.append(
+                        tokenizer.eos_token_id
                     )
-                    for token in a_tokens
-                ]
-
-                target_ids.append(
-                    tokenizer.eos_token_id
-                )
+                else:
+                    # Byte-Level BPE: encode raw text without <q>/<a> markers
+                    q_text = q_line.replace("<q>", "").strip()
+                    a_text = a_line.replace("<a>", "").strip()
+                    # BPE encode returns ids directly, no UNK handling needed
+                    q_ids = tokenizer.encode(q_text) if q_text else []
+                    a_ids = tokenizer.encode(a_text) if a_text else []
+                    input_ids = [
+                        tokenizer.bos_token_id,
+                        tokenizer.q_token_id,
+                    ] + q_ids + [
+                        tokenizer.a_token_id
+                    ]
+                    target_ids = a_ids + [
+                        tokenizer.eos_token_id
+                    ]
 
                 full = input_ids + target_ids
 
@@ -181,6 +199,104 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.samples[idx]
+
+
+# ============================================================
+# Improved pipeline helpers (Meta Spark)
+# ============================================================
+
+def _split_qa_file(data_file: str, ratio: float = 0.9, seed: int = 42):
+    """
+    Split Q/A pairs into train/val without leakage.
+    Returns (train_lines, val_lines) as lists of raw lines.
+    Tokenizer must be trained on train only.
+    """
+    import random
+    with open(data_file, "r", encoding="utf-8") as f:
+        lines = [l.rstrip("\n") for l in f]
+    # Collect valid Q/A pairs
+    pairs = []
+    i = 0
+    while i < len(lines) - 1:
+        if lines[i].strip().startswith("<q>") and lines[i + 1].strip().startswith("<a>"):
+            pairs.append((lines[i], lines[i + 1]))
+            i += 2
+        else:
+            i += 1
+    rnd = random.Random(seed)
+    rnd.shuffle(pairs)
+    split = int(len(pairs) * ratio)
+    train_pairs = pairs[:split]
+    val_pairs = pairs[split:]
+    def flatten(pairs):
+        out = []
+        for q, a in pairs:
+            out.append(q)
+            out.append(a)
+        return out
+    return flatten(train_pairs), flatten(val_pairs)
+
+
+def _build_tokenizer_for_train(train_file: str, tokenizer_name: str, vocab_size: int = 2048):
+    """
+    Build tokenizer on train split only (no validation leakage).
+    """
+    from tokenizer import get_tokenizer
+    if tokenizer_name in ("bytebpe", "bpe"):
+        return get_tokenizer(tokenizer_name, data_file=train_file, vocab_size=vocab_size)
+    # word/whitespace fallback
+    return get_tokenizer(tokenizer_name, data_file=train_file)
+
+
+class PackedDataset(Dataset):
+    """
+    Efficient packing for tiny dataset to avoid 87% padding waste.
+    Concatenates tokenized samples into blocks of seq_len with EOS separator.
+    Causal LM semantics preserved (EOS separates samples).
+    Pre-tokenized and cached in memory.
+    """
+
+    def __init__(self, samples, seq_len, pad_id):
+        # samples: list of full token id lists (already includes BOS/EOS)
+        # Pack into seq_len blocks
+        self.seq_len = seq_len
+        self.pad_id = pad_id
+        # Flatten with EOS separator
+        flat = []
+        for s in samples:
+            flat.extend(s)
+            # Ensure EOS between packed samples is already in s
+        # Chunk into seq_len+1 for x/y
+        self.blocks = []
+        # Create overlapping blocks for LM (stride seq_len)
+        # For tiny dataset, use contiguous packing
+        for i in range(0, len(flat) - seq_len, seq_len):
+            chunk = flat[i : i + seq_len + 1]
+            if len(chunk) < seq_len + 1:
+                # Pad
+                chunk = chunk + [pad_id] * (seq_len + 1 - len(chunk))
+            x = torch.tensor(chunk[:-1], dtype=torch.long)
+            y = torch.tensor(chunk[1:], dtype=torch.long)
+            # Mask all non-pad positions (packed training computes loss everywhere
+            # except pads; EOS is learned as well)
+            mask = y != pad_id
+            self.blocks.append((x, y, mask))
+
+        if not self.blocks and flat:
+            # Fallback: single padded block
+            chunk = flat[: seq_len + 1]
+            if len(chunk) < seq_len + 1:
+                chunk = chunk + [pad_id] * (seq_len + 1 - len(chunk))
+            x = torch.tensor(chunk[:-1], dtype=torch.long)
+            y = torch.tensor(chunk[1:], dtype=torch.long)
+            mask = y != pad_id
+            self.blocks.append((x, y, mask))
+
+    def __len__(self):
+        return len(self.blocks)
+
+    def __getitem__(self, idx):
+        return self.blocks[idx]
 
 
 # ============================================================
@@ -650,13 +766,145 @@ def train_gpu():
     if cli_no_amp:
         train_config.amp_enabled = False
 
-    (
-        tokenizer_name,
-        tokenizer,
-        dataset,
-    ) = create_dataset_and_tokenizer(
-        model_config
-    )
+    # --------------------------------------------------------
+    # Tokenizer / dataset — Meta Spark: train on train split only,
+    # Byte-Level BPE 2048 default, packing, validation split
+    # --------------------------------------------------------
+    # Check resume first to preserve checkpoint vocab
+    resume_path_check = os.path.join(CKPT_DIR, "latest.pt")
+    is_resume_mode = "--resume" in sys.argv and os.path.exists(resume_path_check)
+    val_dataset = None
+    if is_resume_mode:
+        try:
+            ckpt_tmp = torch.load(resume_path_check, map_location="cpu", weights_only=False)
+            ckpt_cfg = ckpt_tmp.get("config")
+            if isinstance(ckpt_cfg, dict):
+                from config import ModelConfig as _MC
+                model_config = _MC(**ckpt_cfg)
+            elif ckpt_cfg is not None:
+                model_config = ckpt_cfg
+            # Keep train_config but ensure tokenizer_name matches checkpoint
+            tokenizer_name = ckpt_tmp.get("tokenizer", getattr(train_config, "tokenizer_name", "word"))
+            tokenizer_json = os.path.join(CKPT_DIR, "tokenizer.json")
+            if os.path.exists(tokenizer_json):
+                from tokenizer import load_tokenizer as _lt
+                tokenizer = _lt(tokenizer_json)
+            else:
+                from tokenizer import get_tokenizer as _gt
+                if tokenizer_name in ("bytebpe", "bpe"):
+                    tokenizer = _gt(tokenizer_name, data_file=DATA_FILE, vocab_size=model_config.vocab_size)
+                else:
+                    tokenizer = _gt(tokenizer_name, data_file=DATA_FILE)
+            dataset = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
+            # Assert vocab consistency
+            assert tokenizer.vocab_size == model_config.vocab_size, (
+                f"Vocab mismatch: tokenizer {tokenizer.vocab_size} vs model {model_config.vocab_size}"
+            )
+        except Exception as e:
+            if is_main:
+                print(f"Resume pre-check failed ({e}), falling back to fresh BPE pipeline", flush=True)
+            is_resume_mode = False
+
+    if not is_resume_mode:
+        # Fresh training: split train/val, train tokenizer on train only
+        train_lines, val_lines = _split_qa_file(DATA_FILE, ratio=0.9, seed=42)
+        # Train tokenizer on train split only (no leakage)
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
+            tf.write("\n".join(train_lines))
+            train_tok_file = tf.name
+        try:
+            from tokenizer import get_tokenizer as _gt
+            tokenizer_name = getattr(train_config, "tokenizer_name", "bytebpe")
+            # Per audit: 2048 for 14KB/178 samples; use train_config vocab if specified
+            vocab_size = 2048
+            if hasattr(train_config, "vocab_size") and getattr(train_config, "vocab_size", None):
+                vocab_size = train_config.vocab_size
+            if tokenizer_name in ("bytebpe", "bpe"):
+                tokenizer = _gt(tokenizer_name, data_file=train_tok_file, vocab_size=vocab_size)
+            else:
+                tokenizer = _gt(tokenizer_name, data_file=train_tok_file)
+        finally:
+            try:
+                os.remove(train_tok_file)
+            except Exception:
+                pass
+        # Model vocab must match tokenizer
+        from config import ModelConfig as _MC
+        model_config = _MC(
+            vocab_size=tokenizer.vocab_size,
+            hidden_size=512,
+            num_layers=22,
+            num_heads=8,
+            intermediate_size=1408,
+            max_seq_len=96,
+        )
+        # Build train/val datasets via temp files (reuse TextDataset which caches in memory)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
+            tf.write("\n".join(train_lines))
+            train_file = tf.name
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
+            tf.write("\n".join(val_lines))
+            val_file = tf.name
+        try:
+            base_train = TextDataset(train_file, tokenizer, model_config.max_seq_len)
+            base_val = TextDataset(val_file, tokenizer, model_config.max_seq_len) if val_lines else None
+            # Pack to reduce 87% padding waste when avg tokens ~12 << 96
+            # Pack if waste high; for tiny dataset always pack train
+            if len(base_train) > 0:
+                # Collect full ids per sample for packing
+                full_samples = []
+                for x, y, mask in base_train.samples:
+                    n = int(mask.sum().item())
+                    # Reconstruct full = x[:n] + last y
+                    # x is full[:-1], y is full[1:]
+                    full = x[:n].tolist() + [int(y[n - 1].item())] if n > 0 else []
+                    # Alternative: directly use y's last token as EOS already
+                    if full:
+                        full_samples.append(full)
+                # Use packed if it reduces blocks vs padded
+                if full_samples:
+                    dataset = PackedDataset(full_samples, model_config.max_seq_len, tokenizer.pad_token_id)
+                    if is_main:
+                        print(
+                            f"Packing: {len(base_train)} padded samples -> {len(dataset)} packed blocks "
+                            f"(seq={model_config.max_seq_len})",
+                            flush=True,
+                        )
+                else:
+                    dataset = base_train
+            else:
+                dataset = base_train
+            val_dataset = base_val
+        finally:
+            try:
+                os.remove(train_file)
+            except Exception:
+                pass
+            try:
+                os.remove(val_file)
+            except Exception:
+                pass
+        # Assert consistency
+        assert tokenizer.vocab_size == model_config.vocab_size, (
+            f"Vocab mismatch: tokenizer {tokenizer.vocab_size} vs model {model_config.vocab_size}"
+        )
+        if is_main:
+            # Dataset statistics for tiny corpus
+            print(
+                f"Train/val split: {len(train_lines)//2} / {len(val_lines)//2} pairs "
+                f"({len(train_lines)} / {len(val_lines)} lines)",
+                flush=True,
+            )
+            print(
+                f"Total answer tokens (train): ~{sum(int(m.sum().item()) for _,_,m in base_train.samples)}",
+                flush=True,
+            )
+            print(
+                f"Total tokens seen in 300k steps: {300000 * train_config.batch_size * 2 * model_config.max_seq_len:,} padded "
+                f"(~{int(300000 * train_config.batch_size * 2 * 11.7):,} answer) — 108k× repetitions, overfitting risk",
+                flush=True,
+            )
 
     if is_main:
 
@@ -813,6 +1061,25 @@ def train_gpu():
         **loader_kwargs,
     )
 
+    # Validation loader (no leakage: tokenizer trained on train only)
+    val_loader = None
+    if "val_dataset" in locals() and val_dataset is not None and len(val_dataset) > 0:
+        val_sampler = (
+            DistributedSampler(val_dataset, shuffle=False) if use_ddp else None
+        )
+        val_kwargs = {
+            "batch_size": batch_size,
+            "sampler": val_sampler,
+            "shuffle": val_sampler is None,
+            "num_workers": num_workers,
+            "pin_memory": use_pin,
+            "drop_last": False,
+        }
+        if num_workers > 0:
+            val_kwargs["persistent_workers"] = True
+            val_kwargs["prefetch_factor"] = prefetch
+        val_loader = DataLoader(val_dataset, **val_kwargs)
+
     if is_main:
 
         print(
@@ -820,6 +1087,11 @@ def train_gpu():
             f"{len(loader)} batches",
             flush=True,
         )
+        if val_loader is not None:
+            print(
+                f"Val: {len(val_dataset)} samples, {len(val_loader)} batches (no leakage)",
+                flush=True,
+            )
         print(
             f"DataLoader: workers={num_workers}, "
             f"prefetch={prefetch}, "
@@ -1003,6 +1275,10 @@ def train_gpu():
 
     step_start = time.time()
     epoch = start_step // max(1, len(loader))
+
+    # Validation tracking for overfitting detection (tiny dataset)
+    best_val_loss = float("inf")
+    best_val_step = 0
 
     while step < max_steps:
 
@@ -1201,6 +1477,71 @@ def train_gpu():
 
                 interval_losses = []
                 loss_count = 0
+                # Keep last train loss for overfitting comparison
+                try:
+                    last_train_loss = avg_loss
+                except NameError:
+                    last_train_loss = 0.0
+
+            # ------------------------------------------------
+            # Validation / overfitting detection (every eval_interval)
+            # ------------------------------------------------
+
+            if (
+                val_loader is not None
+                and step % train_config.eval_interval == 0
+            ):
+                model.eval()
+                val_loss_sum = 0.0
+                val_steps = 0
+                with torch.no_grad():
+                    for vx, vy, vmask in val_loader:
+                        vx = vx.to(device, non_blocking=device.type == "cuda")
+                        vy = vy.to(device, non_blocking=device.type == "cuda")
+                        vmask = vmask.to(device, non_blocking=device.type == "cuda")
+                        with torch.amp.autocast(
+                            "cuda",
+                            dtype=amp_dtype,
+                            enabled=use_amp,
+                        ):
+                            _, vloss = model(vx, vy, loss_mask=vmask)
+                            vloss = vloss.mean()
+                        val_loss_sum += float(vloss.float().item())
+                        val_steps += 1
+                        if val_steps >= 20:
+                            break
+                avg_val = val_loss_sum / max(1, val_steps)
+                if is_main:
+                    # Simple overfitting heuristic for tiny dataset
+                    gap = avg_val - last_train_loss
+                    overfit = gap > 0.5 and step > 500
+                    val_ppl = math.exp(min(20, avg_val)) if avg_val < 20 else float("inf")
+                    print(
+                        f"\n[eval] step {step} val_loss {avg_val:.4f} ppl {val_ppl:.2f} "
+                        f"train {last_train_loss:.4f} gap {gap:.4f}"
+                        f"{' OVERFITTING!' if overfit else ''}",
+                        flush=True,
+                    )
+                    if avg_val < best_val_loss:
+                        best_val_loss = avg_val
+                        best_val_step = step
+                        save_checkpoint(
+                            os.path.join(CKPT_DIR, "best_val.pt"),
+                            model,
+                            model_config,
+                            tokenizer_name,
+                            step,
+                            optimizer,
+                            scheduler,
+                            scaler,
+                            backend="cuda" if device.type == "cuda" else "cpu",
+                            precision="fp16" if use_amp else "fp32",
+                        )
+                        print(
+                            f"  Best val checkpoint saved at step {step} (val {avg_val:.4f})",
+                            flush=True,
+                        )
+                model.train()
 
             # ------------------------------------------------
             # Checkpoint

@@ -296,6 +296,8 @@ def auto_config():
 def auto_config_from_data(
     data_file: str,
     max_seq_len: int = 96,
+    tokenizer_name: str = "bytebpe",
+    vocab_size: int = 2048,
 ):
     """
     Build the model configuration using the vocabulary from the
@@ -309,13 +311,25 @@ def auto_config_from_data(
     For RESUMING an existing checkpoint, the tokenizer vocabulary
     must remain compatible with the vocabulary used to create that
     checkpoint.
+
+    Default is Byte-Level BPE 2048 (per audit: 178 samples, 14KB,
+    671 unique words — 2048 avoids sparse 4096). Use 4096 only
+    for larger Kaggle corpus.
     """
 
-    from tokenizer import WordTokenizer
+    if tokenizer_name in ("bytebpe", "bpe"):
+        from tokenizer import ByteBPETokenizer
 
-    tok = WordTokenizer.build(
-        data_file
-    )
+        tok = ByteBPETokenizer.build(
+            data_file,
+            vocab_size=vocab_size,
+        )
+    else:
+        from tokenizer import WordTokenizer
+
+        tok = WordTokenizer.build(
+            data_file
+        )
 
     vocab_size = tok.vocab_size
 
@@ -345,6 +359,7 @@ def auto_config_from_data(
 def auto_train_config(
     data_file="quick_train_data.txt",
     save_dir="quick_ckpt",
+    tokenizer_name: str = "bytebpe",
 ):
     return TrainConfig(
         batch_size=32,
@@ -369,7 +384,7 @@ def auto_train_config(
 
         save_dir=save_dir,
 
-        tokenizer_name="word",
+        tokenizer_name=tokenizer_name,
 
         # -----------------------------------------------------
         # TPU-friendly defaults
