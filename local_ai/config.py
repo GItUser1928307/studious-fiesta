@@ -216,6 +216,21 @@ class TrainConfig:
 
     static_shapes: bool = True
 
+    # DataLoader tuning (Kaggle 2×T4: 4 vCPUs total).
+    # num_workers is per-process; 2 is optimal to avoid
+    # oversubscription with 2 DDP processes.
+    num_workers: int = 2
+    prefetch_factor: int = 2
+    pin_memory: bool = True
+
+    # Mixed precision — FP16 is optimal for T4 Tensor Cores.
+    amp_enabled: bool = True
+    amp_dtype: str = "fp16"
+
+    # torch.compile — PyTorch 2.10, test on Kaggle before enabling.
+    compile_enabled: bool = False
+    compile_mode: str = "default"
+
 
 # ============================================================
 # Preset model configurations
@@ -342,7 +357,7 @@ def auto_train_config(
 
         warmup_steps=100,
 
-        log_interval=1,
+        log_interval=10,
 
         save_interval=200,
 
@@ -375,4 +390,15 @@ def auto_train_config(
         gradient_accumulation_steps=1,
 
         static_shapes=True,
+
+        # -----------------------------------------------------
+        # GPU performance — tuned for 2× T4
+        # -----------------------------------------------------
+        num_workers=2,
+        prefetch_factor=2,
+        pin_memory=True,
+        amp_enabled=True,
+        amp_dtype="fp16",
+        compile_enabled=False,
+        compile_mode="default",
     )

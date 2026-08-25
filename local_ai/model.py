@@ -144,40 +144,15 @@ class CausalSelfAttention(nn.Module):
             self.rope_sin,
         )
 
-        # Static sequence length is useful for XLA because it helps
-        # prevent unnecessary recompilations.
-        causal_mask = torch.triu(
-            torch.ones(
-                seq_len,
-                seq_len,
-                device=x.device,
-                dtype=torch.bool,
-            ),
-            diagonal=1,
-        )
-
-        attention_scores = torch.matmul(
+        # Use FlashAttention / memory-efficient SDPA when available.
+        # Falls back to the same math as before but much faster on
+        # T4 with FP16 and avoids materializing the causal mask.
+        y = F.scaled_dot_product_attention(
             q,
-            k.transpose(-2, -1),
-        )
-
-        attention_scores = attention_scores * (
-            self.head_dim ** -0.5
-        )
-
-        attention_scores = attention_scores.masked_fill(
-            causal_mask,
-            torch.finfo(attention_scores.dtype).min,
-        )
-
-        attention_weights = F.softmax(
-            attention_scores,
-            dim=-1,
-        )
-
-        y = torch.matmul(
-            attention_weights,
+            k,
             v,
+            is_causal=True,
+            scale=self.head_dim ** -0.5,
         )
 
         y = y.transpose(1, 2).reshape(

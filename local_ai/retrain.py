@@ -476,6 +476,33 @@ def train_gpu():
 
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # CLI overrides for Kaggle benchmarking
+    # --------------------------------------------------------
+    def _get_cli_arg(name, typ=int, default=None):
+        if name in sys.argv:
+            try:
+                idx = sys.argv.index(name)
+                return typ(sys.argv[idx + 1])
+            except Exception:
+                return default
+        return default
+
+    cli_batch_size = _get_cli_arg("--batch-size", int, None)
+    cli_workers = _get_cli_arg("--workers", int, None)
+    cli_prefetch = _get_cli_arg("--prefetch", int, None)
+    cli_compile = "--compile" in sys.argv
+    cli_no_compile = "--no-compile" in sys.argv
+    cli_no_amp = "--no-amp" in sys.argv
+    # --benchmark is handled in the training loop for extra timing
 
     use_ddp = "RANK" in os.environ
 
@@ -586,6 +613,20 @@ def train_gpu():
         CKPT_DIR,
     )
 
+    # Apply CLI overrides (preserve checkpoint compatibility)
+    if cli_batch_size is not None:
+        train_config.batch_size = cli_batch_size
+    if cli_workers is not None:
+        train_config.num_workers = cli_workers
+    if cli_prefetch is not None:
+        train_config.prefetch_factor = cli_prefetch
+    if cli_compile:
+        train_config.compile_enabled = True
+    if cli_no_compile:
+        train_config.compile_enabled = False
+    if cli_no_amp:
+        train_config.amp_enabled = False
+
     (
         tokenizer_name,
         tokenizer,
@@ -636,6 +677,28 @@ def train_gpu():
         model_config
     ).to(device)
 
+    # torch.compile for 2×T4 — test on Kaggle, keep only if faster.
+    # Compiled before DDP gives best compatibility with PyTorch 2.10.
+    if train_config.compile_enabled and device.type == "cuda":
+        try:
+            model = torch.compile(
+                model,
+                mode=train_config.compile_mode,
+            )
+            if is_main:
+                print(
+                    f"torch.compile enabled "
+                    f"(mode={train_config.compile_mode})",
+                    flush=True,
+                )
+        except Exception as e:
+            if is_main:
+                print(
+                    f"torch.compile failed: {e} "
+                    f"— continuing without compilation",
+                    flush=True,
+                )
+
     if use_ddp:
 
         model = DDP(
@@ -685,17 +748,35 @@ def train_gpu():
         else None
     )
 
+    # Tuned for Kaggle 2×T4: 4 vCPUs total, 2 processes.
+    # 2 workers per process avoids oversubscription.
+    requested_workers = getattr(
+        train_config, "num_workers", 2
+    )
     num_workers = min(
-        8,
+        requested_workers,
         os.cpu_count() or 1,
     )
+    # Cap at 2 per GPU when using DDP
+    if use_ddp and world_size > 1:
+        num_workers = min(num_workers, 2)
+    if num_workers < 0:
+        num_workers = 0
+
+    prefetch = getattr(
+        train_config, "prefetch_factor", 2
+    )
+    use_pin = getattr(
+        train_config, "pin_memory", True
+    ) and device.type == "cuda"
 
     loader_kwargs = {
         "batch_size": batch_size,
         "shuffle": sampler is None,
         "sampler": sampler,
         "num_workers": num_workers,
-        "pin_memory": device.type == "cuda",
+        "pin_memory": use_pin,
+        "drop_last": True,
     }
 
     if num_workers > 0:
@@ -706,7 +787,7 @@ def train_gpu():
 
         loader_kwargs[
             "prefetch_factor"
-        ] = 2
+        ] = prefetch
 
     loader = DataLoader(
         dataset,
@@ -720,19 +801,51 @@ def train_gpu():
             f"{len(loader)} batches",
             flush=True,
         )
+        print(
+            f"DataLoader: workers={num_workers}, "
+            f"prefetch={prefetch}, "
+            f"pin_memory={use_pin}, "
+            f"batch={batch_size} "
+            f"(effective {batch_size * world_size}), "
+            f"drop_last=True",
+            flush=True,
+        )
 
     # --------------------------------------------------------
-    # Mixed precision
+    # Mixed precision — FP16 for T4 Tensor Cores
     # --------------------------------------------------------
 
     use_amp = (
-        device.type == "cuda"
+        getattr(train_config, "amp_enabled", True)
+        and device.type == "cuda"
     )
+
+    amp_dtype = torch.float16
+    # Allow override via config but force fp16 for T4
+    cfg_dtype = getattr(
+        train_config, "amp_dtype", "fp16"
+    )
+    if cfg_dtype == "bf16":
+        # T4 does not have BF16 Tensor Cores; keep FP16
+        if is_main:
+            print(
+                "Warning: BF16 requested but T4 uses FP16 — "
+                "forcing fp16",
+                flush=True,
+            )
+        amp_dtype = torch.float16
 
     scaler = torch.amp.GradScaler(
         "cuda",
         enabled=use_amp,
     )
+
+    if is_main:
+        print(
+            f"AMP: {'fp16' if use_amp else 'fp32'} "
+            f"(dtype={amp_dtype})",
+            flush=True,
+        )
 
     # --------------------------------------------------------
     # Optimizer / scheduler
@@ -839,15 +952,17 @@ def train_gpu():
 
     start = time.time()
 
-    loss_sum = 0.0
+    # Use tensor accumulation on GPU to avoid per-step sync
+    interval_losses = []
     loss_count = 0
 
     step_start = time.time()
+    epoch = start_step // max(1, len(loader))
 
     while step < max_steps:
 
         if sampler is not None:
-            sampler.set_epoch(step)
+            sampler.set_epoch(epoch)
 
         for x, y, mask in loader:
 
@@ -878,6 +993,7 @@ def train_gpu():
 
             with torch.amp.autocast(
                 "cuda",
+                dtype=amp_dtype,
                 enabled=use_amp,
             ):
 
@@ -912,7 +1028,9 @@ def train_gpu():
 
             step += 1
 
-            loss_sum += loss.item()
+            # Accumulate without sync — only .item() at log interval
+            if is_main:
+                interval_losses.append(loss.detach())
             loss_count += 1
 
             # ------------------------------------------------
@@ -944,13 +1062,28 @@ def train_gpu():
                     )
                 )
 
-                avg_loss = (
-                    loss_sum
-                    / max(
-                        1,
-                        loss_count,
-                    )
+                tokens_per_sec = (
+                    it_per_sec
+                    * batch_size
+                    * model_config.max_seq_len
+                    * world_size
                 )
+                samples_per_sec = (
+                    it_per_sec * batch_size * world_size
+                )
+
+                if interval_losses:
+                    try:
+                        avg_loss = (
+                            torch.stack(interval_losses)
+                            .float()
+                            .mean()
+                            .item()
+                        )
+                    except Exception:
+                        avg_loss = 0.0
+                else:
+                    avg_loss = 0.0
 
                 pct = (
                     step
@@ -1011,7 +1144,8 @@ def train_gpu():
                     f"Step {step}/{max_steps} | "
                     f"Loss {avg_loss:.4f} | "
                     f"LR {current_lr:.2e} | "
-                    f"{it_per_sec:.1f}it/s | "
+                    f"{it_per_sec:.1f}it/s "
+                    f"{tokens_per_sec:.0f}tok/s | "
                     f"{h}:{m:02d}:{s:02d} elapsed | "
                     f"ETA {rh}:{rm:02d}:{rs:02d}  ",
                     end="",
@@ -1020,7 +1154,7 @@ def train_gpu():
 
                 step_start = time.time()
 
-                loss_sum = 0.0
+                interval_losses = []
                 loss_count = 0
 
             # ------------------------------------------------
@@ -1066,6 +1200,8 @@ def train_gpu():
 
             if step >= max_steps:
                 break
+
+        epoch += 1
 
     # --------------------------------------------------------
     # Final checkpoint
