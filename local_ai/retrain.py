@@ -808,27 +808,18 @@ def train_gpu():
     if not is_resume_mode:
         # Fresh training: split train/val, train tokenizer on train only
         train_lines, val_lines = _split_qa_file(DATA_FILE, ratio=0.9, seed=42)
-        # Train tokenizer on train split only (no leakage)
+        # WHOLE DATASET per user request — tokenizer trained on full corpus
+        # (previously train split only to avoid leakage; now whole dataset)
         import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
-            tf.write("\n".join(train_lines))
-            train_tok_file = tf.name
-        try:
-            from tokenizer import get_tokenizer as _gt
-            tokenizer_name = getattr(train_config, "tokenizer_name", "bytebpe")
-            # Per audit: 2048 for 14KB/178 samples; use train_config vocab if specified
-            vocab_size = 2048
-            if hasattr(train_config, "vocab_size") and getattr(train_config, "vocab_size", None):
-                vocab_size = train_config.vocab_size
-            if tokenizer_name in ("bytebpe", "bpe"):
-                tokenizer = _gt(tokenizer_name, data_file=train_tok_file, vocab_size=vocab_size)
-            else:
-                tokenizer = _gt(tokenizer_name, data_file=train_tok_file)
-        finally:
-            try:
-                os.remove(train_tok_file)
-            except Exception:
-                pass
+        from tokenizer import get_tokenizer as _gt
+        tokenizer_name = getattr(train_config, "tokenizer_name", "bytebpe")
+        vocab_size = 2048
+        if hasattr(train_config, "vocab_size") and getattr(train_config, "vocab_size", None):
+            vocab_size = train_config.vocab_size
+        if tokenizer_name in ("bytebpe", "bpe"):
+            tokenizer = _gt(tokenizer_name, data_file=DATA_FILE, vocab_size=vocab_size)
+        else:
+            tokenizer = _gt(tokenizer_name, data_file=DATA_FILE)
         # Model vocab must match tokenizer
         from config import ModelConfig as _MC
         model_config = _MC(
@@ -839,35 +830,27 @@ def train_gpu():
             intermediate_size=1408,
             max_seq_len=96,
         )
-        # Build train/val datasets via temp files (reuse TextDataset which caches in memory)
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
-            tf.write("\n".join(train_lines))
-            train_file = tf.name
+        # Build datasets: TRAIN ON WHOLE DATASET (user request)
+        # Val split still kept for overfitting detection but tokenizer now sees whole data
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tf:
             tf.write("\n".join(val_lines))
             val_file = tf.name
         try:
-            base_train = TextDataset(train_file, tokenizer, model_config.max_seq_len)
+            base_train = TextDataset(DATA_FILE, tokenizer, model_config.max_seq_len)
             base_val = TextDataset(val_file, tokenizer, model_config.max_seq_len) if val_lines else None
             # Pack to reduce 87% padding waste when avg tokens ~12 << 96
-            # Pack if waste high; for tiny dataset always pack train
             if len(base_train) > 0:
-                # Collect full ids per sample for packing
                 full_samples = []
                 for x, y, mask in base_train.samples:
                     n = int(mask.sum().item())
-                    # Reconstruct full = x[:n] + last y
-                    # x is full[:-1], y is full[1:]
                     full = x[:n].tolist() + [int(y[n - 1].item())] if n > 0 else []
-                    # Alternative: directly use y's last token as EOS already
                     if full:
                         full_samples.append(full)
-                # Use packed if it reduces blocks vs padded
                 if full_samples:
                     dataset = PackedDataset(full_samples, model_config.max_seq_len, tokenizer.pad_token_id)
                     if is_main:
                         print(
-                            f"Packing: {len(base_train)} padded samples -> {len(dataset)} packed blocks "
+                            f"Packing (whole dataset): {len(base_train)} padded samples -> {len(dataset)} packed blocks "
                             f"(seq={model_config.max_seq_len})",
                             flush=True,
                         )
@@ -878,10 +861,6 @@ def train_gpu():
             val_dataset = base_val
         finally:
             try:
-                os.remove(train_file)
-            except Exception:
-                pass
-            try:
                 os.remove(val_file)
             except Exception:
                 pass
@@ -890,14 +869,14 @@ def train_gpu():
             f"Vocab mismatch: tokenizer {tokenizer.vocab_size} vs model {model_config.vocab_size}"
         )
         if is_main:
-            # Dataset statistics for tiny corpus
+            # Dataset statistics — whole dataset per user request (val is held-out for eval only, but tokenizer saw whole)
             print(
-                f"Train/val split: {len(train_lines)//2} / {len(val_lines)//2} pairs "
-                f"({len(train_lines)} / {len(val_lines)} lines)",
+                f"Whole dataset: {len(base_train)} samples ({len(open(DATA_FILE, encoding='utf-8').readlines())} lines) "
+                f"— val held-out {len(val_lines)//2} pairs for overfitting detection",
                 flush=True,
             )
             print(
-                f"Total answer tokens (train): ~{sum(int(m.sum().item()) for _,_,m in base_train.samples)}",
+                f"Total answer tokens (whole): ~{sum(int(m.sum().item()) for _,_,m in base_train.samples)}",
                 flush=True,
             )
             print(
